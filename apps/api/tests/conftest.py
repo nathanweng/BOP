@@ -56,6 +56,7 @@ def settings(database_url, tmp_path):
         ffmpeg_binary=os.getenv("FFMPEG_BINARY", "ffmpeg"),
         ffprobe_binary=os.getenv("FFPROBE_BINARY", "ffprobe"),
         transcription_worker_interval_seconds=0,
+        event_worker_interval_seconds=0,
     )
 
 

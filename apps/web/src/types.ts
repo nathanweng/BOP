@@ -66,12 +66,18 @@ export interface HistoryEvent {
   status_timestamp_seconds?: number;
   status_local_seconds?: number;
   status_recording_id?: string;
+  status_reason?: string;
 }
 
 export interface EventHistoryData {
   run_id: string;
   configured: boolean;
   events: HistoryEvent[];
+  state: 'disabled' | 'idle' | 'queued' | 'processing' | 'retrying' | 'failed';
+  pending_segments: number;
+  processed_segments: number;
+  model: string;
+  error: string | null;
 }
 
 export interface Playback {

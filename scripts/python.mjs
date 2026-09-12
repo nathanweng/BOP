@@ -41,7 +41,7 @@ if (mode === 'test') {
   process.exitCode = await run(['-m', 'alembic', 'upgrade', 'head']);
 } else if (mode === 'dev') {
   const code = await run(['-m', 'alembic', 'upgrade', 'head']);
-  process.exitCode = code || await run(['-m', 'uvicorn', 'bop_api.main:app', '--host', '127.0.0.1', '--port', '8000', ...args]);
+  process.exitCode = code || await run(['-m', 'uvicorn', 'bop_api.main:app', '--host', '127.0.0.1', '--port', '8000', '--reload', ...args]);
 } else {
   console.error('Expected dev, migrate, or test.');
   process.exitCode = 1;
