@@ -10,12 +10,24 @@ For reproducible contributor setup, exact runtime dependencies, backend storage 
 
 ## Project status
 
-The current milestone extends the upload and replay foundation with per-camera live transcription. The full MVP requirements below describe later work as well; they are not claims that observation extraction is implemented.
+The current milestone extends the upload and replay foundation with per-camera live transcription and OpenRouter event histories. The full MVP requirements below describe later work as well; they are not claims that the full observation pipeline is implemented.
 
 - **Complete:** persistent incident creation, MP4 upload and validation, manual camera alignment, backend-owned playback runs, synchronized browser video, cutoff-gated segment release, FFmpeg audio extraction per segment, xAI Grok batch Speech-to-Text (behind a provider interface), and a live-updating transcript under each camera feed. Regression tests cover eligibility, restart isolation, silent recordings, provider failure, and configuration health.
 - **Needs verification:** Docker image builds and Compose startup (Docker is unavailable on the development machine); the CI workflow has not yet run on GitHub with the new schema. End-to-end verification with a real `XAI_API_KEY` and staged multi-camera footage is pending.
 - **Deferred:** observations, cross-camera grouping, sitrep generation, reconstruction, evidence review/corrections, Celery/Redis workers, and SSE. No observation-schema placeholders are being implemented in this milestone.
-- **Interface:** basic functional styling; map/location, reconstruction, sitrep, history, and evidence areas remain empty until supported data and processing exist. Each camera feed shows a live transcript panel that updates as segments are released and returned by the provider.
+- **Interface:** basic functional styling; map/location, reconstruction, sitrep, and evidence areas remain empty until supported data and processing exist. Each camera feed shows a live transcript panel. Event history now generates timestamp/title rows from completed transcripts and opens the source video at the corresponding segment start.
+
+### Event history (OpenRouter)
+
+Set `OPENROUTER_API_KEY` in the root `.env`, then restart the API. `OPENROUTER_MODEL` defaults to `openai/gpt-4o-mini` and can be changed to an OpenRouter model supporting JSON output. Both variables are passed to the API by Compose; the key is never sent to the browser. The integration uses the [OpenRouter chat completions API](https://openrouter.ai/docs/quickstart).
+
+After recordings have produced transcripts, click **Generate / update history**. The backend sends the complete released transcript history and the saved log to OpenRouter, validates source references and status changes, and persists the history per run. Existing timestamp and title fields are immutable. The model should add every distinct material event and meaningful clarification. Later evidence can mark a row yellow when it shows an earlier entry was incomplete, misleading, or superseded, or red when it explicitly contradicts it. Each colored row includes a clickable `Clarified at` or `Contradicted at` timestamp that opens the later source. Generation failures retain the last saved history; restart displays an empty history for the new run.
+
+The table contains only **Timestamp** and **Event title**. Timestamps are incident-clock source-segment starts (typically 10-second granularity), not inferred exact event times. Clicking one opens the matching camera in a source player, accounting for camera alignment, without changing the shared replay clock. Extraction is based on speech, so `XAI_API_KEY` is still needed for the existing transcription pipeline. No visual event detection or full observation/review workflow is added.
+
+Requests are limited to 120,000 transcript characters and 500 generated events. Larger histories require future chunking. Real OpenRouter output quality and browser playback verification remain pending until configured with a key and recordings.
+
+Verified September 12, 2026: TypeScript checks, ESLint, production build, seven frontend unit tests, and all 37 SQLite API tests pass. Three event-history tests cover provider source validation, aligned timestamps, missing configuration, persistence, failure retention, cutoff filtering, and restart isolation. No live OpenRouter request was made.
 
 ### Foundation boundaries
 

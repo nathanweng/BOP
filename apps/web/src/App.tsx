@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, messageFor } from './api';
 import { CameraFeed } from './CameraFeed';
+import { EventHistory } from './EventHistory';
 import { formatTime } from './clock';
 import { useSelection } from './selection';
 import type { Incident, Recording, RecordingTranscript } from './types';
@@ -209,7 +210,7 @@ function Workspace({ incident }: { incident: Incident }) {
       <h2 id="sitrep-heading">Current situation report</h2>
       <p className="empty-state">No analyzed observations yet. The overview, latest changes, current status, and unresolved information will appear when source-linked results are available.</p>
     </section>
-    <details className="panel"><summary>Event history</summary><p>No source-linked events or report versions are available.</p></details>
+    <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings} />
     <section className="panel" aria-labelledby="evidence-heading"><h2 id="evidence-heading">Evidence</h2><p className="empty-state">No source-linked claims are available to review.</p></section>
   </div>;
 }
