@@ -49,6 +49,8 @@ function sample(playback: Playback): ClockSample {
 }
 
 export const api = {
+  getSituationReport: (id: string, signal?: AbortSignal) => request<import('./SituationReport').SituationData>(`/incidents/${id}/situation-report`, { signal }),
+  retrySituationReport: (id: string) => request<import('./SituationReport').SituationData>(`/incidents/${id}/situation-report`, { method: 'POST' }),
   getKnowledge: (id: string, signal?: AbortSignal) => request<import('./MindMap').KnowledgeGraph>(`/incidents/${id}/knowledge`, { signal }),
   buildKnowledge: (id: string) => request<{ id: string; status: string }>(`/incidents/${id}/knowledge`, { method: 'POST' }),
   getEvents: (id: string, signal?: AbortSignal) => request<EventHistoryData>(`/incidents/${id}/events`, { signal }),

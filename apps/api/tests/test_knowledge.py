@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from bop_api.knowledge import KnowledgeService, validate_chunk, generate_knowledge
+from bop_api.knowledge import KnowledgeService, compact_graph, validate_chunk, generate_knowledge
 from bop_api.models import Incident, PlaybackRun, Recording, TranscriptSegment, KnowledgeVersion
 
 
@@ -102,7 +102,7 @@ def test_failed_rebuild_retains_prior_map_and_hides_internal_error(app, prepared
     assert enqueue(app, prepared) == vid
 
 
-def test_revision_change_during_generation_cannot_publish(app, prepared):
+def test_playback_revision_change_does_not_cancel_valid_build(app, prepared):
     service = prepared[0]
     def generate(*_):
         with app.state.sessions() as session:
@@ -112,7 +112,50 @@ def test_revision_change_during_generation_cannot_publish(app, prepared):
     service.generator = generate
     service.process(enqueue(app, prepared))
     result = view(app, prepared)
-    assert result['state'] == 'failed' and result['nodes'] == []
+    assert result['state'] == 'completed' and len(result['nodes']) == 2
+
+
+def test_auto_queue_once_even_after_rewind_and_do_not_retry_failures_forever(app, prepared):
+    service = prepared[0]
+    with app.state.sessions() as session:
+        session.get(PlaybackRun, prepared[2]).position_seconds = 0
+        session.commit()
+    service.queue_ready()
+    service.queue_ready()
+    with app.state.sessions() as session:
+        rows = list(session.query(KnowledgeVersion).filter_by(run_id=prepared[2]))
+        assert len(rows) == 1
+        rows[0].status = 'failed'
+        session.commit()
+    service.queue_ready()
+    assert view(app, prepared)['state'] == 'failed'
+
+
+def test_saved_replay_is_ordered_deterministic_and_preserves_sources(app, prepared):
+    service = prepared[0]
+    service.process(enqueue(app, prepared))
+    result = view(app, prepared)
+    steps = result['replay']['steps']
+    assert [s['id'] for s in steps] == ['n1', 'n2', 'e1']
+    assert steps[-1]['incident_time'] == 22
+    assert steps[-1]['at'] > steps[1]['at']
+    assert result['sources']['s0']['extractor'] == 'stored_transcript'
+    assert result['progress']['stage'] == 'ready'
+    assert view(app, prepared)['replay'] == result['replay']
+
+
+def test_restart_during_build_prevents_publication(app, prepared):
+    service = prepared[0]
+    def generate(*_):
+        with app.state.sessions() as session:
+            session.get(Incident, prepared[1]).active_run_id = None
+            session.commit()
+        return fixture_graph()
+    service.generator = generate
+    service.process(enqueue(app, prepared))
+    with app.state.sessions() as session:
+        row = session.query(KnowledgeVersion).filter_by(run_id=prepared[2]).one()
+        assert row.status == 'failed' and row.replay_json is None
 
 
 def test_expired_worker_lease_recovers(app, prepared, clock):
@@ -145,16 +188,55 @@ def test_api_readiness_and_build_gate(client, incident):
     assert client.get(path + '?cutoff_seconds=-1').status_code == 422
 
 
-def test_generator_processes_every_batch_without_silent_truncation(monkeypatch, settings):
+def test_generator_sends_complete_history_once_with_fast_high_level_settings(monkeypatch, settings):
     import json
     requests = []
     def provider(request):
         body = json.loads(request.data)
         content = json.loads(body['messages'][1]['content'])
-        requests.append(content['sources'])
+        requests.append((body, content['sources']))
         return {'choices': [{'message': {'content': json.dumps({'observations': [], 'nodes': [], 'edges': []})}}]}
     monkeypatch.setattr('bop_api.knowledge._provider_response', provider)
     sources = [{'segment_id': f's{i}', 'text': 'Silence marker.'} for i in range(25)]
     generate_knowledge(settings, sources)
-    assert [len(batch) for batch in requests] == [12, 12, 1]
-    assert [source for batch in requests for source in batch] == sources
+    assert requests[0][1] == sources
+    assert requests[0][0]['model'] == settings.openrouter_knowledge_model
+    assert requests[0][0]['max_tokens'] == 8000
+    assert 'at most 12 nodes and 18 edges' in requests[0][0]['messages'][0]['content']
+
+
+def test_compact_graph_enforces_scene_board_limits_and_removes_unused_evidence():
+    observations = [dict(id=f'o{i}', segment_id='s0', text='source', attribution='Witness')
+                    for i in range(20)]
+    nodes = [dict(id=f'n{i}', kind='claim', label=f'Claim {i}', description='', uncertainty='',
+                  observation_ids=[f'o{i}']) for i in range(15)]
+    edges = [dict(id=f'e{i}', kind='supports', label='Supports', description='', uncertainty='',
+                  observation_ids=['o0'], source='n0', target=f'n{i + 1}') for i in range(14)]
+    result = compact_graph({'observations': observations, 'nodes': nodes, 'edges': edges})
+    assert len(result['nodes']) == 12
+    assert len(result['edges']) == 11
+    assert {obs['id'] for obs in result['observations']} == {f'o{i}' for i in range(12)}
+
+
+def test_thumbnail_is_scoped_to_saved_run_and_exact_source_window(client, app, prepared, monkeypatch):
+    from types import SimpleNamespace
+    service = prepared[0]
+    vid = enqueue(app, prepared)
+    service.process(vid)
+    with app.state.sessions() as session:
+        session.get(Recording, 'cam').storage_key = 'f' * 32 + '.mp4'
+        session.commit()
+    calls = []
+    def extract(args, **kwargs):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=b'jpeg', stderr=b'')
+    monkeypatch.setattr('bop_api.main.subprocess.run', extract)
+    path = f'/api/incidents/{prepared[1]}/knowledge/{vid}/sources/s0/thumbnail'
+    response = client.get(path)
+    assert response.status_code == 200 and response.headers['content-type'] == 'image/jpeg'
+    assert calls[0][calls[0].index('-ss') + 1] == '5.0'
+    assert client.get(path.replace('/s0/', '/unknown/')).status_code == 404
+    with app.state.sessions() as session:
+        session.get(Incident, prepared[1]).active_run_id = None
+        session.commit()
+    assert client.get(path).status_code == 404
