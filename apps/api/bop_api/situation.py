@@ -17,6 +17,8 @@ from .models import Incident, PlaybackRun, Recording, TranscriptSegment, EventHi
 from .playback import playback_view, utc
 
 logger = logging.getLogger(__name__)
+RECENT_EVENT_SECONDS = 120
+
 SECTIONS = ('overview', 'developments', 'scene_status', 'clarifications')
 SCHEMA = object_schema({key: {'type': 'array', 'items': object_schema({
     'text': {'type': 'string'}, 'event_ids': {'type': 'array', 'items': {'type': 'string'}}, 'source_ids': {'type': 'array', 'items': {'type': 'string'}}
@@ -113,7 +115,15 @@ def generate_report(settings, snapshot, previous):
             'represented in evidence.events; transcripts clarify attribution, not introduce new facts. '
             'overview: 1-2 sentences explaining what reportedly happened and the central situation. '
             'developments: only material changes needed to understand the scene now, integrated with earlier '
-            'context so this briefing stands alone. Omit routine chronology and repeated details. scene_status: latest REPORTED people/roles, locations, assistance, injuries '
+            'context so this briefing stands alone. Event color is not a prerequisite for inclusion: actively '
+            'include recent current (uncolored) events in developments and scene_status, not just yellow/red '
+            'assessments. evidence.recent_event_ids identifies events from the latest two minutes of analyzed '
+            'evidence, including recently reassessed older events. Prefer useful fresh details about activity, '
+            'people, locations and assistance even without a warning or major change. As new events arrive, '
+            'cycle stale routine uncolored details out of the replacement briefing; do not keep repeating '
+            'them merely because they appeared in previous_report. Retain older facts only when still needed '
+            'to explain the central situation or an ongoing condition. Recency does not prove a condition '
+            'continues now. Avoid repeated details. scene_status: latest REPORTED people/roles, locations, assistance, injuries '
             'and access conditions where supported; distinguish a past report from a present confirmed condition. '
             'clarifications: ONLY unresolved questions already represented in the event list. If there are none, '
             'return an empty array. Never add a generic responder checklist or invent questions from missing '
@@ -197,9 +207,13 @@ class SituationService:
                     'incident_start': s.incident_start_seconds, 'incident_end': s.incident_end_seconds, 'text': s.text or ''}
             evidence.append({**{key: value for key, value in event.items() if key != 'source_text'},
                              'source_ids': list(dict.fromkeys(refs))})
-        snapshot = {'events': evidence, 'sources': sources}
-        digest = hashlib.sha256(json.dumps({'schema': 3, 'model': self.settings.openrouter_model, **snapshot}, sort_keys=True).encode()).hexdigest()
         known = max((s['incident_end'] for s in sources.values()), default=0)
+        recent_ids = [event['id'] for event in evidence
+                      if max(sources[ref]['incident_end'] for ref in event['source_ids'])
+                      >= known - RECENT_EVENT_SECONDS]
+        snapshot = {'events': evidence, 'sources': sources, 'known_through': known,
+                    'recent_event_ids': recent_ids}
+        digest = hashlib.sha256(json.dumps({'schema': 4, 'model': self.settings.openrouter_model, **snapshot}, sort_keys=True).encode()).hexdigest()
         cutoff = playback_view(run, recordings, self.clock()).position_seconds
         return snapshot, digest, known, cutoff
 

@@ -229,3 +229,30 @@ def test_redundant_machine_citation_suffix_is_removed_without_changing_claim():
     result = supported_report(data, {'s0': {}}, [{'id': 'event1', 'source_ids': ['s0']}])
     assert result['overview'][0]['text'] == 'A witness reports an incident.'
     assert result['overview'][0]['source_ids'] == ['s0']
+
+
+def test_recent_uncolored_events_rotate_while_old_context_remains_available(app, prepared, clock):
+    service, iid, rid = prepared
+    with app.state.sessions() as session:
+        recording = session.get(Recording, 'cam')
+        recording.duration_seconds = 300
+        session.get(PlaybackRun, rid).position_seconds = 200
+        session.add(TranscriptSegment(id='fresh', run_id=rid, recording_id='cam',
+            local_start_seconds=190, local_end_seconds=200, incident_start_seconds=190,
+            incident_end_seconds=200, status='completed', text='The driver is at the entrance.', created_at=clock()))
+        history = session.get(EventHistory, rid)
+        events = json.loads(history.events_json)
+        events.append({'id': 'fresh-event', 'segment_id': 'fresh', 'recording_id': 'cam',
+            'timestamp_seconds': 190, 'local_seconds': 190, 'title': 'Driver at entrance', 'status': 'current'})
+        history.events_json = json.dumps(events)
+        session.commit()
+        snapshot, digest, known, _ = service.inputs(session, session.get(Incident, iid), session.get(PlaybackRun, rid))
+        assert known == snapshot['known_through'] == 200
+        assert snapshot['recent_event_ids'] == ['fresh-event']
+        assert len(snapshot['events']) == 2  # Old context remains citable, not deleted.
+        events[0].update(status='outdated', assessment_history=[{'segment_id': 'fresh', 'status': 'outdated'}])
+        history.events_json = json.dumps(events)
+        session.commit()
+        updated, new_digest, _, _ = service.inputs(session, session.get(Incident, iid), session.get(PlaybackRun, rid))
+        assert updated['recent_event_ids'] == ['event1', 'fresh-event']
+        assert new_digest != digest

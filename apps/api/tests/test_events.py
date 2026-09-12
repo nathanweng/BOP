@@ -117,3 +117,29 @@ def test_history_persistence_failure_and_restart(app, client, incident, monkeypa
         assert api.post(f"/api/incidents/{incident['id']}/playback", json={
             "action": "restart", "expected_revision": playback["revision"]}).status_code == 200
         assert api.get(path).json()["events"] == []
+
+
+def test_same_batch_identity_contradiction_and_subjective_review(monkeypatch, settings):
+    sources = [SimpleNamespace(id='first', recording_id='camera',
+        text='Driver: My name is John Smith. Officer: He seems suspicious.',
+        incident_start_seconds=0, local_start_seconds=0),
+        SimpleNamespace(id='later', recording_id='camera', text='The same driver: My name is Michael Jones.',
+        incident_start_seconds=20, local_start_seconds=20)]
+    changes = {'new_events': [
+        {'id': 'new-1', 'segment_id': 'first', 'title': 'Driver gives name John Smith'},
+        {'id': 'new-2', 'segment_id': 'first', 'title': 'Officer thinks driver seems suspicious'}],
+        'updates': [
+            {'event_id': 'new-1', 'supporting_segment_id': 'later', 'status': 'disproven',
+             'reason': 'The same driver gives incompatible names; actual identity is unresolved.'},
+            {'event_id': 'new-2', 'supporting_segment_id': 'first', 'status': 'outdated',
+             'reason': 'Subjective impression requires human judgment.'}]}
+    monkeypatch.setattr('bop_api.events._provider_response', lambda _: {
+        'choices': [{'message': {'content': json.dumps(changes)}}]})
+    events = generate_events(settings, sources)
+    by_title = {event['title']: event for event in events}
+    identity = by_title['Driver gives name John Smith']
+    opinion = by_title['Officer thinks driver seems suspicious']
+    assert identity['status'] == 'disproven'
+    assert identity['timestamp_seconds'] == 0 and identity['status_timestamp_seconds'] == 20
+    assert opinion['status'] == 'outdated'
+    assert opinion['assessment_history'][0]['segment_id'] == 'first'

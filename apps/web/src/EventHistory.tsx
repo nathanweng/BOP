@@ -69,7 +69,7 @@ export function EventHistory({ incidentId, runId, recordings, onSeek, seekDisabl
   };
   return <section className="panel event-history-panel" id="event-history" aria-labelledby="event-history-heading">
     <div className="section-heading facts-heading"><div><h2 id="event-history-heading"><span className="section-number">03</span> Events & facts</h2>
-      <p>A chronological log of the incident. Color marks facts that later changed.</p></div>
+      <p>A chronological log of the incident. Yellow marks human review or changed details; red marks objective contradictions.</p></div>
       <span className="analysis-status" role="status"><span className="status-dot" />{status}</span></div>
     <div className="facts-toolbar"><div className="fact-filters" role="group" aria-label="Filter events">
       {(['all', 'current', 'challenged'] as const).map((value) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
