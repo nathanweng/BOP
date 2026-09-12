@@ -89,7 +89,7 @@ One incident dashboard containing:
 2. **Next — statement-based reconstruction scene.** Directly beneath or immediately after the main stage, show the evolving reconstruction for the current simulation cutoff. It follows the live/map view so responders can first inspect the source context, then review a synthesized interpretation of people, locations, movement, and event order.
 3. Shared playback controls and incident clock, persistent while reviewing the main stage or reconstruction.
 4. Current sitrep with latest changes and unresolved information.
-5. Expandable event history and an evidence panel for selected claims.
+5. Filterable event history with source details shown in context rather than a separate evidence panel.
 
 Selecting a map marker, body-camera feed, reconstruction object, or sitrep item should keep the dashboard in the same incident context and reveal the linked source clips and observations. Do not let a reconstruction selection advance the incident clock or reveal future footage.
 

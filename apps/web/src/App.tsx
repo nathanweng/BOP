@@ -61,7 +61,7 @@ export default function App() {
       <a className="skip-link" href="#main-content">Skip to workspace</a>
       <header className="app-header">
         <a className="brand" href="/" aria-label="Bodycam workspace home"><span className="brand-mark"><Icon name="layers" /></span>BODYCAM<span className="brand-slash">/</span></a>
-        <nav className="top-nav" aria-label="Workspace navigation"><a href="/" aria-current={!incidentId ? 'page' : undefined}>Incidents</a>{incidentId && <><a href="#stage-heading">Camera views</a><a href="#event-history">Event history</a></>}</nav>
+        <nav className="top-nav" aria-label="Workspace navigation"><a href="/" aria-current={!incidentId ? 'page' : undefined}>Incidents</a>{incidentId && <><a href="#stage-heading">Camera views</a><a href="#event-history">Events &amp; facts</a></>}</nav>
         <span className="simulation-status"><span className="status-dot" />Simulated replay</span>
         <button className="new-incident-button" onClick={() => setNavOpen(true)} aria-controls="incident-nav" aria-expanded={navOpen}><span aria-hidden="true">+</span> New incident</button>
       </header>
@@ -245,7 +245,7 @@ function Workspace({ incident }: { incident: Incident }) {
     />}
 
     <section className={`panel main-stage${hasCameras ? ' has-cameras' : ''}${stageExpanded ? ' stage-expanded' : ''}`} aria-labelledby="stage-heading">
-      <div className="section-heading"><h2 id="stage-heading"><span className="section-number">01</span> Incident map and body-camera view</h2>
+      <div className="section-heading"><h2 id="stage-heading"><span className="section-number">01</span> Camera views</h2>
         <a href={`?incident=${encodeURIComponent(incident.id)}&view=mindmap`} target={`mindmap-${incident.id}`}
           onClick={(event) => {
             const popup = window.open(event.currentTarget.href, `mindmap-${incident.id}`, 'popup,width=1500,height=950,resizable=yes,scrollbars=yes');
@@ -290,16 +290,21 @@ function Workspace({ incident }: { incident: Incident }) {
 
     <div className="analysis-layout">
     <section className="panel deferred-panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">
-      <h2 id="reconstruction-heading">Statement-based reconstruction</h2>
-      <p className="empty-state">No reconstruction is available. Source-linked observations are required before a scene can be shown.</p>
+      <h2 id="reconstruction-heading"><span className="section-number">02</span> Scene reconstruction</h2>
+      <p className="empty-state">Awaiting observations to reconstruct the scene.</p>
     </section>
 
     <section className="panel deferred-panel" aria-labelledby="sitrep-heading" data-testid="analysis-empty-state">
-      <h2 id="sitrep-heading">Current situation report</h2>
-      <p className="empty-state">No analyzed observations yet. The overview, latest changes, current status, and unresolved information will appear when source-linked results are available.</p>
+      <h2 id="sitrep-heading"><span className="section-number">03</span> Situation report</h2>
+      <p className="empty-state">Awaiting analyzed observations for a situation summary.</p>
     </section>
-    <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings} />
-    <section className="panel" aria-labelledby="evidence-heading"><h2 id="evidence-heading">Evidence</h2><p className="empty-state">No source-linked claims are available to review.</p></section>
+    <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings}
+      seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
+        select(incident.id, recordingId);
+        commitScrub(seconds);
+        document.getElementById('stage-heading')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      }} />
+
     </div>
     <section className="playback-bar" aria-label="Shared replay controls">
       <div className="clock-column">
