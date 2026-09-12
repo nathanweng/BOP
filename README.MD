@@ -21,7 +21,7 @@ The current milestone extends the upload and replay foundation with per-camera l
 
 ### Incident workspace design
 
-The interface takes its visual direction from Anduril's editorial layouts: warm ivory surfaces, ink typography, restrained olive details and animated point fields. It opens directly into a searchable incident library, without a splash screen. A native dialog drawer handles incident creation and switching; camera footage takes the full main stage, with transcripts and explicitly unavailable location context alongside it. No decorative imagery is presented as incident evidence.
+The interface opens directly into a searchable incident library, without a splash screen. A native dialog drawer handles incident creation and switching; camera footage takes the full main stage, with transcripts and explicitly unavailable location context alongside it. No decorative imagery is presented as incident evidence.
 
 The replay dock stays available at the bottom of the screen. “Expand view” transitions the existing camera stage into a focused workspace without replacing the video elements or changing the shared clock; Escape exits it. Recording setup starts expanded for a new incident and collapsed when reopening one with recordings. The knowledge-map window, event tables, errors and yellow/red claim states use the same visual system.
 
