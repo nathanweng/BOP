@@ -3,6 +3,7 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, messageFor } from './api';
 import { CameraFeed } from './CameraFeed';
+import { SituationReport } from './SituationReport';
 import { EventHistory } from './EventHistory';
 import { BoardStatus } from './BoardStatus';
 import { formatTime } from './clock';
@@ -155,6 +156,7 @@ function Workspace({ incident }: { incident: Incident }) {
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [eventTarget, setEventTarget] = useState<{ id: string }>();
   const [stageExpanded, setStageExpanded] = useState(false);
   useEffect(() => {
     if (!stageExpanded) return;
@@ -286,17 +288,10 @@ function Workspace({ incident }: { incident: Incident }) {
 
 
     <div className="analysis-layout">
-    <section className="panel deferred-panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">
-      <h2 id="reconstruction-heading"><span className="section-number">02</span> Scene reconstruction</h2>
-      <p className="empty-state">Awaiting observations to reconstruct the scene.</p>
-    </section>
-
-    <section className="panel deferred-panel" aria-labelledby="sitrep-heading" data-testid="analysis-empty-state">
-      <h2 id="sitrep-heading"><span className="section-number">03</span> Situation report</h2>
-      <p className="empty-state">Awaiting analyzed observations for a situation summary.</p>
-    </section>
+    <SituationReport incidentId={incident.id} runId={replay.playback.run_id} incidentTime={displayPosition}
+      onSelectEvent={(id) => setEventTarget({ id })} />
     <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings}
-      seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
+      eventTarget={eventTarget} seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
         select(incident.id, recordingId);
         commitScrub(seconds);
         document.getElementById('stage-heading')?.scrollIntoView({ block: 'start', behavior: 'instant' });

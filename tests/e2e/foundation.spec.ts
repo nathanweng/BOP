@@ -177,11 +177,10 @@ test('real uploads, alignment and shared replay persist across reload and restar
     });
   });
 
-  await test.step('deferred analysis panels stay empty until observations exist', async () => {
-    await expect(page.getByRole('heading', { name: '02 Scene reconstruction', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: '03 Situation report', exact: true })).toBeVisible();
-    await expect(page.getByTestId('analysis-empty-state')).toContainText('Awaiting analyzed observations for a situation summary.');
-    await expect(page.getByTestId('reconstruction-empty-state')).toContainText('Awaiting observations to reconstruct the scene.');
+  await test.step('scene summary stays empty until analyzed events exist', async () => {
+    await expect(page.getByRole('heading', { name: '02 Scene summary', exact: true })).toBeVisible();
+    await expect(page.getByTestId('analysis-empty-state')).toContainText(/Awaiting analyzed events|Scene summaries are unavailable/);
+    await expect(page.getByTestId('reconstruction-empty-state')).toHaveCount(0);
     const stored = await readIncident();
     for (const recording of stored.recordings) {
       expect(recording.processing_status).toBe('transcribing');
