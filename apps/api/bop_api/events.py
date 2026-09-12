@@ -153,6 +153,14 @@ def generate_events(settings, segments, existing_events=()):
     except ValidationError:
         raise EventProviderError("OpenRouter returned JSON that did not match the event schema.") from None
     known = {event["id"]: event for event in existing}
+    # Models occasionally cite a source segment instead of the event UUID. Accept
+    # that shorthand only when it identifies exactly one saved event.
+    by_segment = {}
+    for event in existing:
+        by_segment.setdefault(event["segment_id"], []).append(event)
+    for segment_id, matches in by_segment.items():
+        if len(matches) == 1:
+            known.setdefault(segment_id, matches[0])
     for candidate in changes.new_events:
         if candidate.segment_id not in sources:
             raise ValueError("Provider returned an unknown source.")
@@ -175,7 +183,12 @@ def generate_events(settings, segments, existing_events=()):
     for change in changes.updates:
         source = sources.get(change.supporting_segment_id)
         if change.event_id not in known or source is None:
-            raise ValueError("Provider returned an invalid event update.")
+            logger.warning(
+                "Ignoring unsupported event update (known_event=%s, known_source=%s)",
+                change.event_id in known,
+                source is not None,
+            )
+            continue
         event = known[change.event_id]
         evidence = {"status": change.status, "reason": change.reason, "segment_id": source.id,
                     "recording_id": source.recording_id, "timestamp_seconds": source.incident_start_seconds,

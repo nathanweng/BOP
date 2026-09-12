@@ -137,8 +137,35 @@ def test_new_claim_can_be_colored_in_same_batch(monkeypatch, settings):
     assert result[0]["status_local_seconds"] == 10
     assert result[0]["assessment_history"][0]["source_text"] == "Upstairs not checked"
     changes["updates"][0]["supporting_segment_id"] = "invented"
-    with pytest.raises(ValueError):
-        generate_events(settings, sources)
+    ignored = generate_events(settings, sources)
+    assert ignored[0]["status"] == "current"
+
+
+def test_invalid_update_does_not_discard_valid_new_event(monkeypatch, settings):
+    sources = [SimpleNamespace(id="source", recording_id="cam", text="A responder requests an ambulance",
+                               incident_start_seconds=12, local_start_seconds=10)]
+    changes = {"new_events": [{"id": "new-1", "segment_id": "source", "title": "Responder requests an ambulance"}],
+               "updates": [{"event_id": "invented", "supporting_segment_id": "source",
+                            "status": "outdated", "reason": "Unsupported reference"}]}
+    monkeypatch.setattr("bop_api.events.urlopen", lambda *args, **kwargs: StringIO(json.dumps(
+        {"choices": [{"message": {"content": json.dumps(changes)}}]})))
+    result = generate_events(settings, sources)
+    assert len(result) == 1
+    assert result[0]["title"] == "Responder requests an ambulance"
+    assert result[0]["status"] == "current"
+
+
+def test_unique_source_segment_is_accepted_as_event_alias(monkeypatch, settings):
+    sources = [SimpleNamespace(id="later", recording_id="cam", text="It is a phone, not a knife",
+                               incident_start_seconds=12, local_start_seconds=10)]
+    existing = [{"id": "uuid", "segment_id": "earlier", "recording_id": "cam", "timestamp_seconds": 2,
+                 "local_seconds": 0, "title": "Speaker reports a knife", "status": "current"}]
+    changes = {"new_events": [], "updates": [{"event_id": "earlier", "supporting_segment_id": "later",
+               "status": "disproven", "reason": "Speaker corrects the object to a phone."}]}
+    monkeypatch.setattr("bop_api.events.urlopen", lambda *args, **kwargs: StringIO(json.dumps(
+        {"choices": [{"message": {"content": json.dumps(changes)}}]})))
+    result = generate_events(settings, sources, existing)
+    assert result[0]["status"] == "disproven"
 
 
 def test_provider_content_blocks_and_http_errors(monkeypatch, settings):

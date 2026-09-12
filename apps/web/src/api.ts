@@ -49,6 +49,8 @@ function sample(playback: Playback): ClockSample {
 }
 
 export const api = {
+  getKnowledge: (id: string, signal?: AbortSignal) => request<import('./MindMap').KnowledgeGraph>(`/incidents/${id}/knowledge`, { signal }),
+  buildKnowledge: (id: string) => request<{ id: string; status: string }>(`/incidents/${id}/knowledge`, { method: 'POST' }),
   getEvents: (id: string, signal?: AbortSignal) => request<EventHistoryData>(`/incidents/${id}/events`, { signal }),
   generateEvents: (id: string) => request<EventHistoryData>(`/incidents/${id}/events`, { method: 'POST' }, 120000),
   listIncidents: (signal?: AbortSignal) => request<IncidentSummary[]>('/incidents', { signal }),
