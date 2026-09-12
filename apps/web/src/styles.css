@@ -65,7 +65,8 @@ details[open] > summary { margin-bottom: 20px; }
 .app-header { height: 74px; display: flex; align-items: center; gap: 38px; padding: 0 36px; border-bottom: 1px solid var(--border); background: var(--canvas); }
 .brand { display: flex; align-items: center; gap: 8px; text-decoration: none; font-size: 21px; font-weight: 750; letter-spacing: -.9px; flex-shrink: 0; }
 .brand-mark .icon { width: 26px; height: 26px; stroke-width: 1.8; }
-.brand-slash { margin-left: 22px; color: #8b9184; font-weight: 300; }
+.brand-slash { margin-left: 12px; color: #8b9184; font-weight: 300; }
+.brand-name { font: 9px var(--mono); letter-spacing: .8px; color: var(--muted); white-space: nowrap; }
 .top-nav { display: flex; gap: 28px; align-items: center; margin-right: auto; }
 .top-nav a { text-decoration: none; font-size: 12px; padding: 27px 0; position: relative; }
 .top-nav a::after { content: ''; position: absolute; bottom: 16px; left: 0; right: 0; height: 1px; background: var(--ink); transform: scaleX(0); transform-origin: left; transition: transform .25s; }
@@ -396,7 +397,7 @@ button.danger:hover:not(:disabled) { background: var(--red-soft); color: var(--r
   .app-header { padding: 0 16px; height: 64px; gap: 12px; }
   .brand { font-size: 18px; margin-right: auto; }
   .brand-mark .icon { width: 22px; }
-  .brand-slash, .top-nav { display: none; }
+  .brand-slash, .brand-name, .top-nav { display: none; }
   .new-incident-button { min-height: 34px; font-size: 11px; padding: 7px 10px; }
   .incident-library { padding: 0 18px; }
   .library-heading { min-height: 245px; }

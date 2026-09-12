@@ -170,7 +170,7 @@ def create_app(
             situation_service.stop()
             engine.dispose()
 
-    app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="BOP (Bizzy Ops) incident workspace", version="0.1.0", lifespan=lifespan)
     app.add_middleware(UploadBodyLimit, limit=settings.max_upload_bytes + 65_536)
     app.state.engine = engine
     app.state.sessions = sessions

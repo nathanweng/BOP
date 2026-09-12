@@ -105,7 +105,7 @@ def generate_events(settings, segments, existing_events=()):
             "Authorization": f"Bearer {settings.openrouter_api_key}",
             "Content-Type": "application/json",
             "HTTP-Referer": "https://github.com/local/bop",
-            "X-Title": "Bodycam Situation Report",
+            "X-Title": "BOP (Bizzy Ops)",
         },
         data=json.dumps({
             "model": settings.openrouter_model,

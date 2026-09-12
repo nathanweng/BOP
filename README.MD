@@ -1,4 +1,4 @@
-# Bodycam Situation Report
+# BOP (Bizzy Ops)
 
 This repository is the working specification and implementation home for a web application that turns synchronized, prerecorded body-camera recordings into a continuously updated, source-linked situation report (sitrep).
 

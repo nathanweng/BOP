@@ -61,7 +61,7 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to workspace</a>
       <header className="app-header">
-        <a className="brand" href="/" aria-label="Bodycam workspace home"><span className="brand-mark"><Icon name="layers" /></span>BODYCAM<span className="brand-slash">/</span></a>
+        <a className="brand" href="/" aria-label="BOP home"><span className="brand-mark"><Icon name="layers" /></span>BOP<span className="brand-slash">/</span><span className="brand-name">BIZZY OPS</span></a>
         <nav className="top-nav" aria-label="Workspace navigation"><a href="/" aria-current={!incidentId ? 'page' : undefined}>Incidents</a>{incidentId && <><a href="#stage-heading">Camera views</a><a href="#event-history">Events &amp; facts</a></>}</nav>
         <span className="simulation-status"><span className="status-dot" />Simulated replay</span>
         <button className="new-incident-button" onClick={() => setNavOpen(true)} aria-controls="incident-nav" aria-expanded={navOpen}><span aria-hidden="true">+</span> New incident</button>
@@ -86,7 +86,7 @@ export default function App() {
           {incidents.isError && <p role="alert">{messageFor(incidents.error)} <button onClick={() => void incidents.refetch()}>Retry incidents</button></p>}
           <div className="library-list"><div className="library-columns"><span>Incident</span><span>Created</span><span>Open workspace</span></div>{matching.map((entry, index) => <button className="library-row" key={entry.id} onClick={() => openIncident(entry.id)} style={{ ['--row' as string]: Math.min(index, 8) }}><span className="library-row-title"><span className="library-index">{String(index + 1).padStart(2, '0')}</span><span><strong>{entry.title}</strong><small>{entry.context || 'No incident context supplied'}</small></span></span><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><span className="library-open"><Icon name="arrow" /></span></button>)}</div>
           {!incidents.isPending && !incidents.isError && !matching.length && <div className="library-empty"><h2>{search ? 'No matching incidents.' : 'Ready for your first recording.'}</h2><p>{search ? 'Try another title.' : 'Create an incident to bring your recordings into one workspace.'}</p></div>}
-          <footer className="library-footer"><span>BODYCAM / INCIDENT REVIEW</span><span>Prerecorded sources. Source-linked context.</span></footer>
+          <footer className="library-footer"><span>BOP / INCIDENT REVIEW</span><span>Bizzy Ops · prerecorded, source-linked context.</span></footer>
         </div>}
         {incidentId && incident.isPending && <p className="workspace-loading" role="status">Opening incident…</p>}
         {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
