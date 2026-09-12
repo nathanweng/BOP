@@ -13,7 +13,7 @@ class Settings:
     ffprobe_binary: str = "ffprobe"
     xai_api_key: str = ""
     openrouter_api_key: str = ""
-    openrouter_model: str = "anthropic/claude-sonnet-4.6"
+    openrouter_model: str = "openai/gpt-4o-mini"
     event_worker_interval_seconds: float = 3.0
     xai_stt_url: str = "https://api.x.ai/v1/stt"
     xai_stt_language: str = "en"

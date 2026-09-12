@@ -78,6 +78,18 @@ def test_failure_backoff_and_manual_retry(app, prepared, clock):
     assert service.process_incident(incident_id)
 
 
+def test_stale_attempt_count_without_error_still_processes(app, prepared):
+    service, add, incident_id, run_id = prepared
+    add("first")
+    with app.state.sessions() as session:
+        session.add(EventHistory(run_id=run_id, events_json="[]", attempts=3, error=None))
+        session.commit()
+    service.generator = lambda *args: [{"id": "e", "segment_id": "first", "recording_id": "cam",
+                                        "timestamp_seconds": 2, "local_seconds": 0, "title": "A report",
+                                        "status": "current"}]
+    assert service.process_incident(incident_id)
+
+
 def test_lease_prevents_duplicate_calls_and_recovers_after_crash(app, prepared, clock):
     service, add, incident_id, run_id = prepared
     add("first")
@@ -129,7 +141,7 @@ def test_new_claim_can_be_colored_in_same_batch(monkeypatch, settings):
         generate_events(settings, sources)
 
 
-def test_openrouter_content_blocks_and_http_errors(monkeypatch, settings):
+def test_provider_content_blocks_and_http_errors(monkeypatch, settings):
     source = SimpleNamespace(id="source", recording_id="cam", text="Help arrived",
                              incident_start_seconds=2, local_start_seconds=0)
     changes = {"updates": [], "new_events": [{"id": "new-1", "segment_id": "source", "title": "Help reportedly arrives"}]}

@@ -24,7 +24,7 @@ def test_provider_sources_and_timestamps(monkeypatch, settings):
         assert json.loads(payload["messages"][1]["content"])["transcript_sources"][0]["text"] == source.text
         schema = json.dumps(payload["response_format"]["json_schema"]["schema"])
         assert "minLength" not in schema and "maxItems" not in schema
-        assert timeout == 90
+        assert timeout == 180
         return Response()
     monkeypatch.setattr("bop_api.events.urlopen", respond)
     events = generate_events(settings, [source])

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('history polls automatically, colors corrections, and groups timestamps', async ({ page }) => {
+test('history polls automatically, colors corrections, and shows evidence times', async ({ page }) => {
   // Browser-only fixtures: nothing is inserted into a saved incident or sent to a provider.
   let corrected = false;
   const playback = { run_id: 'history-run', state: 'paused', position_seconds: 0, duration_seconds: 60,
@@ -12,9 +12,13 @@ test('history polls automatically, colors corrections, and groups timestamps', a
     const events = [
       { id: 'one', segment_id: 'first', recording_id: 'camera', timestamp_seconds: 2, local_seconds: 0,
         title: 'Speaker reports a knife', status: corrected ? 'disproven' : 'current',
+        status_timestamp_seconds: corrected ? 20 : undefined, status_local_seconds: corrected ? 20 : undefined,
+        status_recording_id: corrected ? 'camera' : undefined,
         status_reason: corrected ? 'Speaker corrects the object to a phone.' : undefined },
-      { id: 'two', segment_id: 'first', recording_id: 'camera', timestamp_seconds: 2, local_seconds: 0,
+      { id: 'two', segment_id: 'later', recording_id: 'camera', timestamp_seconds: 12, local_seconds: 10,
         title: 'Speaker reports the building empty', status: corrected ? 'outdated' : 'current',
+        status_timestamp_seconds: corrected ? 30 : undefined, status_local_seconds: corrected ? 30 : undefined,
+        status_recording_id: corrected ? 'camera' : undefined,
         status_reason: corrected ? 'Upstairs has not been checked.' : undefined },
     ];
     const body = path.endsWith('/events') ? { run_id: playback.run_id, configured: true,
@@ -24,14 +28,16 @@ test('history polls automatically, colors corrections, and groups timestamps', a
   });
   await page.goto('/?incident=history-ui');
   const table = page.locator('.event-history');
-  await expect(table.getByRole('button', { name: /Review source at/ })).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'Current facts' })).toBeVisible();
+  await expect(table.getByRole('button', { name: /Review source at/ })).toHaveCount(2);
   await expect(table.locator('.event-disproven')).toHaveCount(0);
   corrected = true;
+  await expect(page.getByRole('heading', { name: 'Suspicious or invalidated' })).toBeVisible();
   await expect(table.locator('.event-disproven')).toHaveCount(1);
   await expect(table.locator('.event-outdated')).toHaveCount(1);
   await expect(table.locator('.event-disproven')).toHaveCSS('background-color', 'rgb(255, 240, 241)');
   await expect(table.locator('.event-outdated')).toHaveCSS('background-color', 'rgb(255, 247, 214)');
-  await expect(table.getByRole('button', { name: /Review source at/ })).toHaveCount(1);
-  await expect(table.getByText('Upstairs has not been checked.')).toBeVisible();
+  await expect(page.getByRole('button', { name: /Review evidence at/ })).toHaveCount(2);
+  await expect(page.getByText('Upstairs has not been checked.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate / update history' })).toHaveCount(0);
 });

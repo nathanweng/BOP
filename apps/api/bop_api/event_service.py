@@ -112,12 +112,13 @@ class EventService:
             existing = normalize_events(json.loads(history.events_json))
             # Atomic lease prevents browser retries and other API workers from duplicating work.
             claimed = session.execute(update(EventHistory).where(
-                EventHistory.run_id == run_id, EventHistory.attempts < 3,
+                EventHistory.run_id == run_id,
+                or_(EventHistory.attempts < 3, EventHistory.error.is_(None)),
                 EventHistory.processed_json == history.processed_json,
                 EventHistory.events_json == history.events_json,
                 or_(EventHistory.lease_until.is_(None), EventHistory.lease_until <= now),
                 or_(EventHistory.retry_at.is_(None), EventHistory.retry_at <= now),
-            ).values(lease_token=token, lease_until=now + timedelta(seconds=180)).execution_options(synchronize_session=False))
+            ).values(lease_token=token, lease_until=now + timedelta(seconds=240)).execution_options(synchronize_session=False))
             if claimed.rowcount != 1:
                 session.rollback()
                 return False
