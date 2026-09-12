@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class StrictModel(BaseModel):
@@ -36,8 +36,18 @@ class RecordingUpdate(StrictModel):
 
 
 class PlaybackCommand(StrictModel):
-    action: Literal["play", "pause", "restart"]
+    action: Literal["play", "pause", "restart", "seek"]
     expected_revision: int = Field(ge=0, strict=True)
+    position_seconds: float | None = Field(default=None, ge=0, le=86_400)
+
+    @model_validator(mode="after")
+    def _position_matches_action(self) -> "PlaybackCommand":
+        if self.action == "seek":
+            if self.position_seconds is None:
+                raise ValueError("position_seconds is required for a seek command")
+        elif self.position_seconds is not None:
+            raise ValueError("position_seconds is only allowed with a seek command")
+        return self
 
 
 class PlaybackView(BaseModel):

@@ -129,17 +129,28 @@ test('real uploads, alignment and shared replay persist across reload and restar
     await expect(play).toBeEnabled();
   });
 
-  await test.step('restart creates a new durable run at zero', async () => {
-    await page.getByRole('button', { name: 'Restart', exact: true }).click();
+  await test.step('reset to 0 keeps the same run so transcripts and events survive', async () => {
+    await page.getByTestId('reset-to-start').click();
     await expect.poll(async () => (await readPlaybackSample(page, [cameraA.id, cameraB.id])).incidentTime).toBe(0);
-    const restarted = (await readIncident()).playback;
-    expect(restarted.run_id).not.toBe(initialRun);
-    expect(restarted.state).toBe('paused');
-    expect(restarted.position_seconds).toBe(0);
+    const afterReset = (await readIncident()).playback;
+    expect(afterReset.run_id).toBe(initialRun);
+    expect(afterReset.state).toBe('paused');
+    expect(afterReset.position_seconds).toBe(0);
     await expect.poll(async () => {
       const sample = await readPlaybackSample(page, [cameraA.id, cameraB.id]);
       return sample.videos.every((video) => video.paused && video.currentTime < 0.1);
     }).toBe(true);
+  });
+
+  await test.step('clear all history creates a new durable run after confirmation', async () => {
+    await page.getByTestId('clear-history').click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await page.getByTestId('confirm-clear').click();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect.poll(async () => (await readIncident()).playback.run_id).not.toBe(initialRun);
+    const restarted = (await readIncident()).playback;
+    expect(restarted.state).toBe('paused');
+    expect(restarted.position_seconds).toBe(0);
     await page.reload();
     await expect(play).toBeEnabled();
     expect((await readIncident()).playback.run_id).toBe(restarted.run_id);
@@ -207,7 +218,8 @@ test('a finished feed stops while the later feed continues, then the shared run 
   expect(stored.playback.position_seconds).toBeCloseTo(second.duration_seconds + 2, 2);
   await page.reload();
   await expect(page.getByTestId(`feed-status-${second.id}`)).toHaveText('Ended');
-  await expect(page.getByRole('button', { name: 'Restart', exact: true })).toBeEnabled();
+  await expect(page.getByTestId('reset-to-start')).toBeEnabled();
+  await expect(page.getByTestId('clear-history')).toBeEnabled();
 });
 
 test('unreadable MP4 gives an actionable upload error without creating a recording', async ({ page, request }) => {

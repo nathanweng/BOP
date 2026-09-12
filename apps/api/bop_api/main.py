@@ -415,6 +415,13 @@ def create_app(
                 run.anchor_at = timestamp
                 run.state = "playing"
                 run.revision += 1
+            elif payload.action == "seek":
+                # Seeking keeps the same run so transcripts and event history persist.
+                target = min(max(0.0, float(payload.position_seconds or 0.0)), current.duration_seconds)
+                run.position_seconds = target
+                run.anchor_at = timestamp
+                run.state = "ended" if current.duration_seconds > 0 and target >= current.duration_seconds else "paused"
+                run.revision += 1
             else:
                 run.position_seconds = current.position_seconds
                 run.anchor_at = timestamp

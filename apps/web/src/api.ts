@@ -1,4 +1,4 @@
-import type { ClockSample, EventHistoryData, Incident, IncidentSummary, Playback, PlaybackAction, Recording, Transcripts } from './types';
+import type { ClockSample, EventHistoryData, Incident, IncidentSummary, Playback, PlaybackCommand, Recording, Transcripts } from './types';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -65,11 +65,11 @@ export const api = {
     },
   ),
   getPlayback: async (id: string, signal?: AbortSignal) => sample(await request<Playback>(`/incidents/${id}/playback`, { signal }, 3500)),
-  controlPlayback: async (id: string, action: PlaybackAction, expectedRevision: number) => sample(await request<Playback>(
-    `/incidents/${id}/playback`, {
-      method: 'POST', ...jsonBody({ action, expected_revision: expectedRevision }),
-    },
-  )),
+  controlPlayback: async (id: string, command: PlaybackCommand, expectedRevision: number) => {
+    const body: Record<string, unknown> = { action: command.action, expected_revision: expectedRevision };
+    if (command.action === 'seek') body.position_seconds = command.positionSeconds;
+    return sample(await request<Playback>(`/incidents/${id}/playback`, { method: 'POST', ...jsonBody(body) }));
+  },
   getTranscripts: (id: string, signal?: AbortSignal) => request<Transcripts>(`/incidents/${id}/transcripts`, { signal }, 5000),
 };
 
