@@ -158,6 +158,7 @@ test('real uploads, alignment and shared replay persist across reload and restar
   });
 
   await test.step('manual alignment edits survive another reload', async () => {
+    await page.locator('.setup-panel > summary').click();
     const alignment = page.getByRole('form', { name: 'Alignment for Camera B', exact: true });
     await alignment.getByLabel('Camera label for Camera B', { exact: true }).fill('Camera B aligned');
     await alignment.getByLabel('Start offset for Camera B (seconds)', { exact: true }).fill('3');
@@ -169,6 +170,7 @@ test('real uploads, alignment and shared replay persist across reload and restar
     const response = await saved;
     expect(response.ok(), await response.text()).toBeTruthy();
     await page.reload();
+    await page.locator('.setup-panel > summary').click();
     await expect(page.getByLabel('Start offset for Camera B aligned (seconds)', { exact: true })).toHaveValue('3');
     expect((await readIncident()).recordings.find((recording) => recording.id === cameraB.id)).toMatchObject({
       camera_label: 'Camera B aligned', start_offset_seconds: 3,
@@ -176,10 +178,10 @@ test('real uploads, alignment and shared replay persist across reload and restar
   });
 
   await test.step('deferred analysis panels stay empty until observations exist', async () => {
-    await expect(page.getByRole('heading', { name: 'Statement-based reconstruction', exact: true })).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'Current situation report', exact: true })).toBeVisible();
-    await expect(page.getByTestId('analysis-empty-state')).toContainText('No analyzed observations yet.');
-    await expect(page.getByTestId('reconstruction-empty-state')).toContainText('No reconstruction is available.');
+    await expect(page.getByRole('heading', { name: '02 Scene reconstruction', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '03 Situation report', exact: true })).toBeVisible();
+    await expect(page.getByTestId('analysis-empty-state')).toContainText('Awaiting analyzed observations for a situation summary.');
+    await expect(page.getByTestId('reconstruction-empty-state')).toContainText('Awaiting observations to reconstruct the scene.');
     const stored = await readIncident();
     for (const recording of stored.recordings) {
       expect(recording.processing_status).toBe('transcribing');

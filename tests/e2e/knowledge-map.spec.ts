@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test('knowledge map shows people and connections, filters future evidence and opens an independent source', async ({ page }) => {
+test('knowledge map shows people and connections, filters future statements and seeks the shared incident', async ({ page }) => {
   let commands = 0;
   const playback = { run_id: 'knowledge-run', state: 'paused', position_seconds: 12, duration_seconds: 30,
     revision: 0, server_time: new Date().toISOString() };
@@ -23,7 +23,10 @@ test('knowledge map shows people and connections, filters future evidence and op
       { ...node('correction-edge', 'contradicts', 'Phone report contradicts knife report', 30), source: 'correction', target: 'claim' }] };
   await page.context().route('**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
-    if (path.endsWith('/playback') && route.request().method() === 'POST') commands++;
+    if (path.endsWith('/playback') && route.request().method() === 'POST') {
+      const command = route.request().postDataJSON();
+      if (command.action === 'seek') { commands++; playback.position_seconds = command.position_seconds; playback.revision++; }
+    }
     const body = path.endsWith('/knowledge') ? graph : path.endsWith('/events') ? {
       run_id: playback.run_id, configured: true, state: 'idle', events: [], pending_segments: 0, processed_segments: 3,
     } : path.endsWith('/transcripts') ? { run_id: playback.run_id, recordings: [] }
@@ -40,17 +43,47 @@ test('knowledge map shows people and connections, filters future evidence and op
   await expect(mapWindow).toHaveURL(/view=mindmap/);
   await expect(mapWindow.getByText('Independent map window')).toBeVisible();
   await expect(mapWindow.getByRole('region', { name: 'Incident map', exact: true })).toHaveCount(0);
-  await expect(map.getByText('Police & responders', { exact: true })).toBeVisible();
+  await expect(map.locator('.graph-legend').getByText('Responders', { exact: true })).toBeVisible();
   await expect(map.locator('.knowledge-contradicted')).toHaveCount(1);
   await map.getByRole('checkbox', { name: 'Follow timeline' }).check();
   await expect(map.getByText('Correction: phone', { exact: true })).toHaveCount(0);
   await expect(map.locator('.knowledge-contradicted')).toHaveCount(0);
   await map.getByRole('checkbox', { name: 'Follow timeline' }).uncheck();
   await map.getByRole('button', { name: 'Connection: Witness speaks with responding officer' }).click();
-  const inspector = map.getByRole('complementary', { name: 'Map evidence inspector' });
+  const inspector = map.getByRole('complementary', { name: 'Map details' });
   await expect(inspector.getByRole('heading', { name: 'Witness speaks with responding officer' })).toBeVisible();
-  await inspector.getByRole('button', { name: /Open source/ }).click();
-  await expect(inspector.getByLabel('Map source video')).toBeVisible();
-  expect(commands).toBe(0);
+  await inspector.getByRole('button', { name: /Jump to incident at/ }).click();
+  await expect(mapWindow.getByText('Incident replay moved to the selected source time.')).toBeVisible();
+  await expect(mapWindow.locator('video')).toHaveCount(0);
+  expect(commands).toBe(1);
+  await map.getByRole('button', { name: 'Close details' }).click();
+  const witness = map.getByRole('button', { name: 'Unidentified witness, person, active' });
+  await witness.click();
+  await expect(inspector.getByRole('heading', { name: 'Unidentified witness' })).toBeVisible();
+  await map.getByRole('checkbox', { name: 'Focus connections' }).check();
+  await expect(map.locator('.graph-node')).toHaveCount(2);
+  await map.getByRole('checkbox', { name: 'Focus connections' }).uncheck();
+  await map.getByRole('button', { name: 'Close details' }).click();
+  await map.getByLabel('Find in knowledge map').fill('witness');
+  await expect(map.locator('.graph-count')).toContainText('1 matches');
+  await map.getByLabel('Find in knowledge map').fill('');
+  await map.getByRole('button', { name: 'Zoom in', exact: true }).click();
+  await expect(map.getByLabel('Graph zoom')).toHaveText('120%');
+  await map.getByRole('button', { name: 'Reset view' }).click();
+  const before = await witness.getAttribute('transform');
+  const dot = await witness.locator('.node-dot').boundingBox();
+  if (!dot) throw new Error('Missing graph node');
+  await mapWindow.mouse.move(dot.x + dot.width / 2, dot.y + dot.height / 2);
+  await mapWindow.mouse.down();
+  await mapWindow.mouse.move(dot.x + 70, dot.y + 50, { steps: 8 });
+  await mapWindow.mouse.up();
+  await expect(witness).not.toHaveAttribute('transform', before!);
+  await map.getByRole('button', { name: 'Reset view' }).click();
+  await witness.focus();
+  await mapWindow.keyboard.press('Enter');
+  await expect(inspector.getByRole('heading', { name: 'Unidentified witness' })).toBeVisible();
   await mapWindow.screenshot({ path: 'test-results/knowledge-map-window.png', fullPage: true });
+  await mapWindow.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => mapWindow.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await mapWindow.screenshot({ path: 'test-results/knowledge-map-mobile.png', fullPage: true });
 });

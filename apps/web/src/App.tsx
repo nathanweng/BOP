@@ -9,6 +9,9 @@ import { useSelection } from './selection';
 import { processedThrough } from './timeline';
 import type { Incident, Recording, RecordingTranscript } from './types';
 import { useReplay } from './useReplay';
+import { Icon } from './Icon';
+import { SignalField } from './SignalField';
+import { transition } from './motion';
 
 function incidentFromUrl() {
   return new URLSearchParams(window.location.search).get('incident');
@@ -17,7 +20,9 @@ function incidentFromUrl() {
 export default function App() {
   const queryClient = useQueryClient();
   const [incidentId, setIncidentId] = useState(incidentFromUrl);
-  const [navOpen, setNavOpen] = useState(true);
+  const [navOpen, setNavOpen] = useState(false);
+  const drawer = useRef<HTMLDialogElement>(null);
+  const [search, setSearch] = useState('');
   const incidents = useQuery({ queryKey: ['incidents'], queryFn: ({ signal }) => api.listIncidents(signal) });
   const incident = useQuery({
     queryKey: ['incident', incidentId],
@@ -35,7 +40,8 @@ export default function App() {
     const url = new URL(window.location.href);
     url.searchParams.set('incident', id);
     window.history.pushState({}, '', url);
-    setIncidentId(id);
+    transition(() => { setIncidentId(id); setNavOpen(false); });
+    window.scrollTo({ top: 0, behavior: 'instant' });
   };
 
   const created = async (next: Incident) => {
@@ -44,45 +50,47 @@ export default function App() {
     await queryClient.invalidateQueries({ queryKey: ['incidents'] });
   };
 
+  useEffect(() => {
+    if (navOpen) drawer.current?.showModal();
+    else drawer.current?.close();
+  }, [navOpen]);
+
+  const matching = incidents.data?.filter((entry) => entry.title.toLowerCase().includes(search.toLowerCase())) ?? [];
   return (
     <div className="app-shell">
-      <header className="app-header"><div><p className="eyebrow">Bodycam</p><h1>Incident workspace</h1></div><span className="status">Prerecorded media · Simulated replay</span></header>
-      <div className={`app-body${navOpen ? '' : ' nav-collapsed'}`}>
-        <aside className="sidebar" id="incident-nav" aria-label="Incident navigation">
-          <button
-            type="button"
-            className="sidebar-toggle"
-            aria-expanded={navOpen}
-            aria-controls="incident-nav"
-            onClick={() => setNavOpen((open) => !open)}
-          >
-            {navOpen ? 'Hide incident list' : 'Show incident list'}
-          </button>
-          {navOpen && <>
-            <section aria-labelledby="create-heading">
-              <h2 id="create-heading">Create an incident</h2>
-              <CreateIncident onCreated={created} />
-            </section>
-            <nav aria-label="Saved incidents">
-              <h2>Saved incidents</h2>
-              {incidents.isPending && <p role="status">Loading incidents…</p>}
-              {incidents.isError && <div><p role="alert">{messageFor(incidents.error)}</p><button onClick={() => void incidents.refetch()}>Retry incidents</button></div>}
-              {incidents.data?.length === 0 && <p className="muted">No incidents yet.</p>}
-              <ul className="incident-list">{incidents.data?.map((entry) => <li key={entry.id}>
-                <button type="button" onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>
-                  {entry.title}<small>{new Date(entry.created_at).toLocaleString()}</small>
-                </button>
-              </li>)}</ul>
-            </nav>
-          </>}
-        </aside>
-        <main id="main-content">
-          {!incidentId && <section className="panel empty-welcome"><h2>Start with the source recordings</h2><p>Create an incident, upload one or more MP4 recordings, then align their start times before beginning synchronized replay.</p><p>Situation reports and reconstruction remain empty until real processing is available.</p></section>}
-          {incidentId && incident.isPending && <p role="status">Loading incident…</p>}
-          {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
-          {incident.data && <Workspace key={incident.data.id} incident={incident.data} />}
-        </main>
-      </div>
+      <a className="skip-link" href="#main-content">Skip to workspace</a>
+      <header className="app-header">
+        <a className="brand" href="/" aria-label="Bodycam workspace home"><span className="brand-mark"><Icon name="layers" /></span>BODYCAM<span className="brand-slash">/</span></a>
+        <nav className="top-nav" aria-label="Workspace navigation"><a href="/" aria-current={!incidentId ? 'page' : undefined}>Incidents</a>{incidentId && <><a href="#stage-heading">Camera views</a><a href="#event-history">Events &amp; facts</a></>}</nav>
+        <span className="simulation-status"><span className="status-dot" />Simulated replay</span>
+        <button className="new-incident-button" onClick={() => setNavOpen(true)} aria-controls="incident-nav" aria-expanded={navOpen}><span aria-hidden="true">+</span> New incident</button>
+      </header>
+      <dialog className="incident-drawer" ref={drawer} id="incident-nav" aria-labelledby="drawer-title" onCancel={() => setNavOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setNavOpen(false); }}>
+        <div className="drawer-inner"><div className="drawer-heading"><span className="eyebrow">INCIDENT LIBRARY</span><button onClick={() => setNavOpen(false)} aria-label="Close incident library">✕</button></div>
+          <h2 id="drawer-title">New incident<span>.</span></h2><CreateIncident onCreated={created} />
+          <nav className="drawer-saved" aria-label="Saved incidents"><h3>Or return to an incident</h3>
+            <label className="incident-search"><Icon name="search" /><span className="sr-only">Search incidents</span><input type="search" placeholder="Search incidents" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
+            <ul className="incident-list">{matching.map((entry) => <li key={entry.id}><button onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>{entry.title}<small>{new Date(entry.created_at).toLocaleDateString()}</small><Icon name="arrow" /></button></li>)}</ul>
+            {incidents.isPending && <p role="status">Loading incidents…</p>}
+            {incidents.isError && <p role="alert">{messageFor(incidents.error)} <button onClick={() => void incidents.refetch()}>Retry incidents</button></p>}
+            {!incidents.isPending && !incidents.isError && !matching.length && <p className="muted">{search ? 'No matching incidents.' : 'No incidents yet.'}</p>}
+          </nav>
+        </div>
+      </dialog>
+      <main id="main-content">
+        {!incidentId && <div className="incident-library">
+          <header className="library-heading"><div><p className="eyebrow">RECORDINGS / TRANSCRIPTS / EVIDENCE</p><h1>Incidents<span>.</span></h1><p>Your recordings. Every perspective.</p></div><SignalField /></header>
+          <div className="library-toolbar"><span>All incidents <small>{incidents.data?.length ?? '—'}</small></span><label className="incident-search"><Icon name="search" /><span className="sr-only">Find an incident</span><input type="search" placeholder="Find an incident" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button className="primary" onClick={() => setNavOpen(true)}>Create incident <Icon name="arrow" /></button></div>
+          {incidents.isPending && <p role="status">Loading incidents…</p>}
+          {incidents.isError && <p role="alert">{messageFor(incidents.error)} <button onClick={() => void incidents.refetch()}>Retry incidents</button></p>}
+          <div className="library-list"><div className="library-columns"><span>Incident</span><span>Created</span><span>Open workspace</span></div>{matching.map((entry, index) => <button className="library-row" key={entry.id} onClick={() => openIncident(entry.id)} style={{ ['--row' as string]: Math.min(index, 8) }}><span className="library-row-title"><span className="library-index">{String(index + 1).padStart(2, '0')}</span><span><strong>{entry.title}</strong><small>{entry.context || 'No incident context supplied'}</small></span></span><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><span className="library-open"><Icon name="arrow" /></span></button>)}</div>
+          {!incidents.isPending && !incidents.isError && !matching.length && <div className="library-empty"><h2>{search ? 'No matching incidents.' : 'Ready for your first recording.'}</h2><p>{search ? 'Try another title.' : 'Create an incident to bring your recordings into one workspace.'}</p></div>}
+          <footer className="library-footer"><span>BODYCAM / INCIDENT REVIEW</span><span>Prerecorded sources. Source-linked context.</span></footer>
+        </div>}
+        {incidentId && incident.isPending && <p className="workspace-loading" role="status">Opening incident…</p>}
+        {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
+        {incident.data && <Workspace key={incident.data.id} incident={incident.data} />}
+      </main>
     </div>
   );
 }
@@ -127,8 +135,8 @@ function CreateIncident({ onCreated }: { onCreated: (incident: Incident) => Prom
   };
 
   return <form onSubmit={submit} className="stacked-form" aria-label="Create incident">
-    <label>Incident title<input required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} disabled={create.isPending} /></label>
-    <label>Incident context<textarea rows={3} maxLength={10000} value={context} onChange={(event) => setContext(event.target.value)} disabled={create.isPending} /><small>Optional information supplied by you.</small></label>
+    <label>Incident title<input id="new-incident-title" placeholder="e.g. Incident 2026-0142" required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} disabled={create.isPending} /></label>
+    <label>Incident context<textarea placeholder="Add initial context…" rows={3} maxLength={10000} value={context} onChange={(event) => setContext(event.target.value)} disabled={create.isPending} /><small>Optional information supplied by you.</small></label>
     <button type="submit" disabled={!title.trim() || create.isPending}>{create.isPending ? 'Creating incident…' : 'Create incident'}</button>
     {create.isError && <p role="alert" className="error">{messageFor(create.error)}</p>}
   </form>;
@@ -142,9 +150,19 @@ function Workspace({ incident }: { incident: Incident }) {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [readyById, setReadyById] = useState<Record<string, boolean>>({});
   const [setupBusy, setSetupBusy] = useState(false);
+  const [setupOpen, setSetupOpen] = useState(incident.recordings.length === 0);
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [stageExpanded, setStageExpanded] = useState(false);
+  useEffect(() => {
+    if (!stageExpanded) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const exit = (event: KeyboardEvent) => { if (event.key === 'Escape') transition(() => setStageExpanded(false)); };
+    window.addEventListener('keydown', exit);
+    return () => { document.body.style.overflow = previous; window.removeEventListener('keydown', exit); };
+  }, [stageExpanded]);
   const hasCameras = incident.recordings.length >= 1;
   const mediaReady = hasCameras && incident.recordings.every((recording) => readyById[recording.id]);
   const selected = incident.recordings.find((recording) => recording.id === selectedId);
@@ -211,8 +229,57 @@ function Workspace({ incident }: { incident: Incident }) {
   };
 
   return <div className="workspace">
-    <div className="incident-heading"><h2>{incident.title}</h2>{incident.context && <p className="context">{incident.context}</p>}</div>
-    <details className="panel setup-panel" open>
+    <div className="incident-heading"><div><a className="incident-back" href="/">← All incidents</a><h1>{incident.title}</h1>{incident.context && <p className="context">{incident.context}</p>}</div><span className={`status connection-status${replay.connected ? ' connected' : ''}`}><span className="status-dot" />{replay.connected ? 'Replay connected' : 'Replay disconnected'}</span></div>
+    <div className="incident-meta" aria-label="Incident overview">
+      <span><Icon name="camera" />{incident.recordings.length} {incident.recordings.length === 1 ? 'camera' : 'cameras'}</span>
+      <span><Icon name="clock" />{formatTime(duration)} total</span>
+      {selected && <span>Selected: <strong>{selected.camera_label}</strong></span>}
+    </div>
+
+    {confirmClear && <ConfirmDialog
+      title="Clear all history?"
+      body="This deletes the current run's transcripts and event history and resets the incident clock to zero. Uploaded recordings stay in place. This cannot be undone."
+      confirmLabel="Clear all history"
+      onConfirm={confirmClearHistory}
+      onCancel={() => setConfirmClear(false)}
+    />}
+
+    <section className={`panel main-stage${hasCameras ? ' has-cameras' : ''}${stageExpanded ? ' stage-expanded' : ''}`} aria-labelledby="stage-heading">
+      <div className="section-heading"><h2 id="stage-heading"><span className="section-number">01</span> Camera views</h2>
+        <a href={`?incident=${encodeURIComponent(incident.id)}&view=mindmap`} target={`mindmap-${incident.id}`}
+          onClick={(event) => {
+            const popup = window.open(event.currentTarget.href, `mindmap-${incident.id}`, 'popup,width=1500,height=950,resizable=yes,scrollbars=yes');
+            if (popup) { event.preventDefault(); popup.focus(); }
+          }}>Open mind map ↗</a><button className="expand-stage" aria-expanded={stageExpanded} onClick={() => transition(() => setStageExpanded((expanded) => !expanded))}>{stageExpanded ? 'Exit expanded view' : 'Expand view'} <Icon name="target" /></button><span className="stage-source-count">{incident.recordings.length} {incident.recordings.length === 1 ? 'source' : 'sources'}</span></div>
+      <div className="stage-grid">
+        <div className="map-context" role="region" aria-label="Incident map">
+          <div className="map-panel-heading"><span>Location</span></div>
+          <div className="map-unavailable"><Icon name="target" /><h3>No location data</h3><p>No supported location data for this incident.</p></div>
+          <div className="map-footer">{selected ? `Selected source: ${selected.camera_label}` : 'Awaiting source recordings'}</div>
+        </div>
+        <div className="camera-stack">
+          {incident.recordings.length === 0 && <div className="empty-state"><h3>No recordings uploaded</h3><p>Upload an MP4 recording to display a camera feed.</p></div>}
+          {incident.recordings.map((recording) => <CameraFeed
+            key={recording.id}
+            recording={recording}
+            incidentTime={displayPosition}
+            playing={replay.playing && !scrubbing}
+            selected={selectedId === recording.id}
+            audioEnabled={audioEnabled}
+            runId={replay.playback.run_id}
+            transcript={transcriptsByRecording[recording.id]}
+            transcriptConfigured={transcriptionConfigured}
+            transcriptCutoffSeconds={replay.position}
+            onSelect={() => select(incident.id, recording.id)}
+            onProblem={replay.halt}
+            onReady={onReady}
+          />)}
+        </div>
+      </div>
+      {!transcriptionConfigured && incident.recordings.length > 0 && <p className="muted">Live Grok transcription is not configured. Set XAI_API_KEY on the API to enable per-camera transcripts. Segment release still works so the pipeline stays visible.</p>}
+    </section>
+
+    <details className="panel setup-panel" open={setupOpen} onToggle={(event) => setSetupOpen(event.currentTarget.open)}>
       <summary>Recording setup · {incident.recordings.length} {incident.recordings.length === 1 ? 'camera' : 'cameras'}</summary>
       <p>Offsets are seconds after the incident begins. For example, a camera offset of 2 starts when the shared clock reaches 00:02.0.</p>
       {setupLocked && <p className="notice">Use “Clear all history” to unlock uploads and alignment. Clearing history creates a new run and removes the current run's transcripts and event history.</p>}
@@ -220,6 +287,25 @@ function Workspace({ incident }: { incident: Incident }) {
       <div className="recording-settings">{incident.recordings.map((recording) => <AlignmentForm key={recording.id} incidentId={incident.id} recording={recording} disabled={setupLocked || setupBusy} onBusy={setSetupBusy} onSaved={saved} />)}</div>
     </details>
 
+
+    <div className="analysis-layout">
+    <section className="panel deferred-panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">
+      <h2 id="reconstruction-heading"><span className="section-number">02</span> Scene reconstruction</h2>
+      <p className="empty-state">Awaiting observations to reconstruct the scene.</p>
+    </section>
+
+    <section className="panel deferred-panel" aria-labelledby="sitrep-heading" data-testid="analysis-empty-state">
+      <h2 id="sitrep-heading"><span className="section-number">03</span> Situation report</h2>
+      <p className="empty-state">Awaiting analyzed observations for a situation summary.</p>
+    </section>
+    <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings}
+      seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
+        select(incident.id, recordingId);
+        commitScrub(seconds);
+        document.getElementById('stage-heading')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      }} />
+
+    </div>
     <section className="playback-bar" aria-label="Shared replay controls">
       <div className="clock-column">
         <span className="muted">Incident clock · {stateLabel}</span>
@@ -255,7 +341,7 @@ function Workspace({ incident }: { incident: Incident }) {
         <span className="scrubber-status" data-testid="processed-through">Processed through {formatTime(processedCutoff)}</span>
       </div>
       <div className="button-row">
-        <button type="button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
+        <button type="button" className="primary play-button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
         <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy || scrubbing}>Pause</button>
         <button type="button" onClick={() => void replay.control({ action: 'seek', positionSeconds: 0 })} disabled={resetDisabled} data-testid="reset-to-start">Reset to 0</button>
         <button type="button" className="danger" onClick={() => setConfirmClear(true)} disabled={clearDisabled} data-testid="clear-history">Clear all history</button>
@@ -269,59 +355,6 @@ function Workspace({ incident }: { incident: Incident }) {
       {!replay.connected && <button type="button" onClick={replay.reconnect}>Reconnect replay</button>}
     </section>
 
-    {confirmClear && <ConfirmDialog
-      title="Clear all history?"
-      body="This deletes the current run's transcripts and event history and resets the incident clock to zero. Uploaded recordings stay in place. This cannot be undone."
-      confirmLabel="Clear all history"
-      onConfirm={confirmClearHistory}
-      onCancel={() => setConfirmClear(false)}
-    />}
-
-    <section className="panel main-stage" aria-labelledby="stage-heading">
-      <div className="section-heading"><h2 id="stage-heading">Incident map and body-camera view</h2>
-        <a href={`?incident=${encodeURIComponent(incident.id)}&view=mindmap`} target={`mindmap-${incident.id}`}
-          onClick={(event) => {
-            const popup = window.open(event.currentTarget.href, `mindmap-${incident.id}`, 'popup,width=1500,height=950,resizable=yes,scrollbars=yes');
-            if (popup) { event.preventDefault(); popup.focus(); }
-          }}>Open mind map ↗</a><span className="status">Simulated replay</span></div>
-      <div className="stage-grid">
-        <div className="map-context" role="region" aria-label="Incident map">
-          <h3>Incident map</h3><p>No supported location data for this incident.</p><p className="muted">Camera locations are unknown.</p>
-          {selected && <p>Selected source: {selected.camera_label}</p>}
-        </div>
-        <div className="camera-stack">
-          {incident.recordings.length === 0 && <div className="empty-state"><h3>No recordings uploaded</h3><p>Upload an MP4 recording to display a camera feed.</p></div>}
-          {incident.recordings.map((recording) => <CameraFeed
-            key={recording.id}
-            recording={recording}
-            incidentTime={displayPosition}
-            playing={replay.playing && !scrubbing}
-            selected={selectedId === recording.id}
-            audioEnabled={audioEnabled}
-            runId={replay.playback.run_id}
-            transcript={transcriptsByRecording[recording.id]}
-            transcriptConfigured={transcriptionConfigured}
-            transcriptCutoffSeconds={replay.position}
-            onSelect={() => select(incident.id, recording.id)}
-            onProblem={replay.halt}
-            onReady={onReady}
-          />)}
-        </div>
-      </div>
-      {!transcriptionConfigured && incident.recordings.length > 0 && <p className="muted">Live Grok transcription is not configured. Set XAI_API_KEY on the API to enable per-camera transcripts. Segment release still works so the pipeline stays visible.</p>}
-    </section>
-
-    <section className="panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">
-      <h2 id="reconstruction-heading">Statement-based reconstruction</h2>
-      <p className="empty-state">No reconstruction is available. Source-linked observations are required before a scene can be shown.</p>
-    </section>
-
-    <section className="panel" aria-labelledby="sitrep-heading" data-testid="analysis-empty-state">
-      <h2 id="sitrep-heading">Current situation report</h2>
-      <p className="empty-state">No analyzed observations yet. The overview, latest changes, current status, and unresolved information will appear when source-linked results are available.</p>
-    </section>
-    <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings} />
-    <section className="panel" aria-labelledby="evidence-heading"><h2 id="evidence-heading">Evidence</h2><p className="empty-state">No source-linked claims are available to review.</p></section>
   </div>;
 }
 
