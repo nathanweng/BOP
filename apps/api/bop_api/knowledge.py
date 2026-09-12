@@ -19,7 +19,7 @@ from .playback import playback_view
 from .transcription import eligible_windows
 
 logger = logging.getLogger(__name__)
-KNOWLEDGE_PROMPT_VERSION = 2
+KNOWLEDGE_PROMPT_VERSION = 3
 NODE_KINDS = {'person', 'responder', 'location', 'object', 'event', 'claim', 'question', 'recording'}
 EDGE_KINDS = {'stated_by', 'captured_by', 'supports', 'mentions', 'occurred_at', 'before', 'after',
               'updates', 'involves', 'located_at', 'moved_to', 'associated_with', 'corroborates',
@@ -75,6 +75,51 @@ def validate_chunk(data, sources, known_nodes):
     return data
 
 
+def source_excerpt(source):
+    """Compact source fields for hashing and provider calls; word timings stay out of the prompt."""
+    return {'segment_id': source['segment_id'], 'recording_id': source.get('recording_id') or '',
+            'camera_label': source.get('camera_label') or '', 'incident_start': source.get('incident_start'),
+            'incident_end': source.get('incident_end'), 'text': source.get('text') or ''}
+
+
+def accepted_graph(data, sources, known_nodes, prefix='map_'):
+    """Keep source-backed claims and drop invented citations instead of failing the whole board."""
+    if not isinstance(data, dict):
+        return {'observations': [], 'nodes': [], 'edges': []}
+    observations = {}
+    for obs in data.get('observations') or []:
+        if (isinstance(obs, dict) and all(isinstance(obs.get(k), str) and obs[k].strip()
+                for k in ('id', 'segment_id', 'text', 'attribution')) and obs['segment_id'] in sources
+                and obs['id'].startswith(prefix) and obs['id'] not in observations
+                and obs['id'] not in known_nodes and len(obs['attribution']) <= 200):
+            observations[obs['id']] = obs
+    nodes, keys, node_ids = [], set(), set(known_nodes)
+    for item in data.get('nodes') or []:
+        if _accepted_item(item, observations, keys, known_nodes, prefix, False):
+            keys.add(item['id']); node_ids.add(item['id']); nodes.append(item)
+    edges = []
+    for item in data.get('edges') or []:
+        if (_accepted_item(item, observations, keys, known_nodes, prefix, True)
+                and item.get('source') in node_ids and item.get('target') in node_ids
+                and item['source'] != item['target']):
+            keys.add(item['id']); edges.append(item)
+    cited = {ref for item in nodes + edges for ref in item['observation_ids']}
+    return {'observations': [obs for obs in observations.values() if obs['id'] in cited],
+            'nodes': nodes, 'edges': edges}
+
+
+def _accepted_item(item, observations, keys, known_nodes, prefix, edge):
+    return (isinstance(item, dict)
+            and all(isinstance(item.get(k), str) for k in ('id', 'kind', 'label', 'description', 'uncertainty'))
+            and item['label'].strip() and item['id'].startswith(prefix) and len(item['id']) <= 90
+            and len(item['label']) <= 200 and len(item['uncertainty']) <= 400
+            and item['id'] not in keys and item['id'] not in known_nodes
+            and item['kind'] in (EDGE_KINDS if edge else NODE_KINDS)
+            and isinstance(item.get('observation_ids'), list) and item['observation_ids']
+            and all(ref in observations for ref in item['observation_ids'])
+            and (not edge or (isinstance(item.get('source'), str) and isinstance(item.get('target'), str))))
+
+
 def compact_graph(data, max_nodes=12, max_edges=18):
     """Keep the provider's importance order and remove evidence no retained item uses."""
     nodes = data['nodes'][:max_nodes]
@@ -125,15 +170,26 @@ def generate_knowledge(settings, sources, progress=None):
                 f'All IDs must start with {prefix}. Labels <=200 chars, uncertainty <=400 chars. '
                 'Return observations, nodes, edges; empty arrays are allowed for no substantive evidence.'
             )}, {'role': 'user', 'content': json.dumps({
-                'sources': batch})}],
+                'allowed_segment_ids': [s['segment_id'] for s in batch],
+                'sources': [source_excerpt(s) for s in batch]})}],
         }).encode())
-        result = _provider_response(request)
-        chunk = compact_graph(validate_chunk(json.loads(_message_text(result['choices'][0]['message'])),
-                              {s['segment_id'] for s in batch}, {n['id'] for n in graph['nodes']}))
+        try:
+            result = _provider_response(request)
+            raw = json.loads(_message_text(result['choices'][0]['message']))
+        except EventProviderError:
+            raise
+        except (json.JSONDecodeError, KeyError, IndexError, TypeError) as exc:
+            logger.warning('Knowledge map parse failed: %s', exc)
+            raise EventProviderError('The model returned an unreadable map. Retry the build.') from exc
+        offered = sum(len(raw.get(k) or []) for k in ('nodes', 'edges')) if isinstance(raw, dict) else 0
+        chunk = compact_graph(accepted_graph(raw, {s['segment_id'] for s in batch},
+                                             {n['id'] for n in graph['nodes']}, prefix))
+        if offered and not chunk['nodes'] and not chunk['edges']:
+            raise EventProviderError('The model cited sources that are not in this incident. Retry the build.')
         existing_ids = {item['id'] for values in graph.values() for item in values}
         new_ids = [item['id'] for values in chunk.values() for item in values]
         if any(not key.startswith(prefix) or key in existing_ids for key in new_ids) or len(new_ids) != len(set(new_ids)):
-            raise ValueError('Duplicate graph IDs')
+            raise EventProviderError('The model returned duplicate map IDs. Retry the build.')
         for key in graph:
             graph[key].extend(chunk[key])
         if progress:
@@ -168,7 +224,7 @@ class KnowledgeService:
                 for version_id in ids:
                     if self.halt.is_set():
                         break
-                    self.process(version_id)
+                    self.begin(version_id)
             except Exception:
                 logger.exception('Knowledge map worker failed')
 
@@ -217,7 +273,8 @@ class KnowledgeService:
                    if s.status == 'completed' and s.text and s.text.strip()]
         digest = hashlib.sha256(json.dumps({'schema': KNOWLEDGE_PROMPT_VERSION,
             'model': self.settings.openrouter_knowledge_model,
-            'sources': sources, 'recordings': [(r.id, r.camera_label, r.start_offset_seconds, r.duration_seconds) for r in recordings],
+            'sources': [source_excerpt(s) for s in sources],
+            'recordings': [(r.id, r.camera_label, r.start_offset_seconds, r.duration_seconds) for r in recordings],
             'windows': [(s.id, s.status) for s in selected]}, sort_keys=True).encode()).hexdigest()
         ended = playback_view(run, recordings, self.clock()).state == 'ended'
         # Complete terminal windows prove the run reached the end; rewinding while
@@ -228,10 +285,17 @@ class KnowledgeService:
                   'Set OPENROUTER_API_KEY in .env and restart the API.' if not self.settings.openrouter_api_key else '')
         return {'ready': ready, 'reason': '' if ready else reason, 'completed': complete, 'expected': expected, 'failed': failed}, sources, digest
 
-    def enqueue(self, session, incident, run, retry=True):
+    def enqueue(self, session, incident, run, retry=True, force=False):
         readiness, _, digest = self.inputs(session, incident, run)
         if not readiness['ready']:
-            raise HTTPException(409, readiness['reason'])
+            if not force:
+                raise HTTPException(409, readiness['reason'])
+            if not self.settings.openrouter_api_key:
+                raise HTTPException(409, 'Set OPENROUTER_API_KEY in .env and restart the API.')
+            if not readiness['expected']:
+                raise HTTPException(409, readiness['reason'] or 'Add recordings to begin.')
+            if not readiness['completed']:
+                raise HTTPException(409, 'No transcript windows are complete yet.')
         version = session.scalar(select(KnowledgeVersion).where(KnowledgeVersion.run_id == run.id, KnowledgeVersion.input_hash == digest))
         if version is None:
             version = KnowledgeVersion(id=str(uuid4()), run_id=run.id, input_hash=digest, status='queued',
@@ -241,6 +305,9 @@ class KnowledgeService:
             version.status, version.error = 'queued', None
         session.commit()
         return {'id': version.id, 'status': version.status}
+
+    def begin(self, version_id):
+        Thread(target=self.process, args=(version_id,), daemon=True).start()
 
     def process(self, version_id):
         token = str(uuid4())
@@ -302,14 +369,19 @@ class KnowledgeService:
                 projection = self.view(session, incident, run)
                 version.replay_json = json.dumps(replay_manifest(projection['nodes'], projection['edges']))
                 session.commit()
-        except Exception as exc:
-            logger.warning('Knowledge map build failed: %s', type(exc).__name__)
-            with self.sessions() as session:
-                session.execute(update(KnowledgeVersion).where(KnowledgeVersion.id == version_id,
-                    KnowledgeVersion.lease_token == token).values(status='failed', stage='failed', lease_until=None,
-                    error=str(exc)[:500] if isinstance(exc, EventProviderError) else
-                    'Map build failed validation or its inputs changed. Saved maps are retained. Retry the build.'))
-                session.commit()
+        except EventProviderError as exc:
+            logger.warning('Knowledge map build failed: %s', exc)
+            error = str(exc)[:500]
+        except Exception:
+            logger.exception('Knowledge map build failed')
+            error = 'Map build failed validation or its inputs changed. Saved maps are retained. Retry the build.'
+        else:
+            return
+        with self.sessions() as session:
+            session.execute(update(KnowledgeVersion).where(KnowledgeVersion.id == version_id,
+                KnowledgeVersion.lease_token == token).values(status='failed', stage='failed', lease_until=None,
+                error=error))
+            session.commit()
 
     def view(self, session, incident, run, cutoff=None):
         readiness, _, digest = self.inputs(session, incident, run)

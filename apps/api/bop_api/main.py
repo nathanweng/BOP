@@ -516,9 +516,12 @@ def create_app(
         return knowledge_service.view(session, incident, current_run(session, incident), cutoff_seconds)
 
     @app.post("/api/incidents/{incident_id}/knowledge", status_code=202)
-    def build_knowledge(incident_id: str, session: Session = Depends(session_dependency)):
+    def build_knowledge(incident_id: str, force: bool = Query(False), session: Session = Depends(session_dependency)):
         incident = incident_row(session, incident_id, lock=True)
-        return knowledge_service.enqueue(session, incident, current_run(session, incident))
+        result = knowledge_service.enqueue(session, incident, current_run(session, incident), force=force)
+        if result['status'] == 'queued':
+            knowledge_service.begin(result['id'])
+        return result
 
     @app.get("/api/incidents/{incident_id}/knowledge/{version_id}/sources/{segment_id}/thumbnail")
     def board_thumbnail(incident_id: str, version_id: str, segment_id: str, session: Session = Depends(session_dependency)):
