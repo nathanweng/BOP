@@ -1,0 +1,40 @@
+{
+  "name": "bop",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace apps/web",
+    "dev:db": "node --env-file-if-exists=.env scripts/dev-db.mjs",
+    "dev:api": "node --env-file-if-exists=.env scripts/python.mjs dev",
+    "api:migrate": "node --env-file-if-exists=.env scripts/python.mjs migrate",
+    "test:api": "node scripts/python.mjs test",
+    "build": "npm run build --workspace apps/web",
+    "lint": "npm run lint --workspace apps/web",
+    "typecheck": "npm run typecheck --workspace apps/web && npm run typecheck:e2e",
+    "typecheck:e2e": "tsc --project tests/e2e/tsconfig.json",
+    "test": "npm run test --workspace apps/web",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "allowScripts": {
+    "ffmpeg-static@5.3.0": true,
+    "esbuild@0.28.2": true,
+    "@embedded-postgres/darwin-arm64@18.4.0-beta.17": true,
+    "@embedded-postgres/darwin-x64@18.4.0-beta.17": true,
+    "@embedded-postgres/linux-x64@18.4.0-beta.17": true,
+    "@embedded-postgres/linux-arm64@18.4.0-beta.17": true
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^24.13.4",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "ffmpeg-static": "^5.3.0",
+    "ffprobe-static": "^3.1.0"
+  }
+}

@@ -8,52 +8,54 @@ The authoritative product requirements are in [Bodycam MVP Spec.md](./Bodycam%20
 
 ## Project status
 
-The repository currently contains the product specification and project rules. Application code, infrastructure, and automated tests have not been created yet.
+The current milestone is the working upload and replay foundation. The full MVP requirements below describe later work as well; they are not claims that analysis is implemented.
 
-As implementation begins, keep this section current:
+- **Complete:** persistent incident creation, MP4 upload and validation, manual camera alignment, backend-owned playback runs, synchronized browser video, and regression tests. Verified with real MP4s and local PostgreSQL.
+- **Needs verification:** Docker image builds and Compose startup (Docker is unavailable on the development machine); the added CI workflow has not yet run on GitHub. Large recordings near the upload limit and browsers other than Chrome need broader testing.
+- **Deferred:** segment release, audio extraction, transcription, observations, cross-camera grouping, sitrep generation, reconstruction, evidence review/corrections, worker/queue infrastructure, and SSE. No processing interfaces or placeholder services are being implemented in this milestone.
+- **Interface:** basic functional styling; map/location, reconstruction, sitrep, history, and evidence areas remain empty until supported data and processing exist. No sample incident facts or generated reports.
 
-- **Complete:** verified functionality available to other agents.
-- **In progress:** work that is underway or partially integrated.
-- **Needs verification:** implemented work that still needs an end-to-end or visual check.
-- **Deferred:** explicitly outside the MVP or reserved for a later stage.
+### Foundation boundaries
+
+Create an incident, upload two or three MP4 recordings, set when each starts on the incident clock, and replay them together. A start offset of `2` means the camera begins at incident second 2; its local media time is `incident time - 2`. Offsets range from 0 to 86,400 seconds. The duration of the incident is the latest recording end (`offset + duration`).
+
+Uploads must contain one 8-bit H.264 video track with 4:2:0 color and at most one AAC audio track. Silent recordings are accepted. FFprobe reads metadata and FFmpeg decodes the media to validate it; no audio is extracted for analysis. The default limit is 512 MiB per file and validation has a timeout. A recording becomes available only after validation and database storage succeed.
+
+The backend persists a run ID, revision, time anchor, and playback position. Browser clocks follow that state; stale playback commands return HTTP 409. At least two recordings are needed to play. Uploading or editing alignment requires a paused run at zero: restart first after replay has begun. Restart creates a new run, preserves earlier run records, and returns the incident to zero. Resume continues the existing run. Closing the browser does not itself pause the backend clock.
 
 ## Recommended stack
 
-Use a small monorepo with a browser client, an API, and a media-analysis worker:
+Use a small monorepo with a browser client and API. The media-analysis worker and analysis-specific dependencies are planned for a later milestone:
 
 | Area | Choice | Purpose |
 | --- | --- | --- |
 | Frontend | React, TypeScript, Vite | Interactive incident dashboard without unnecessary server-rendering complexity |
-| UI | Tailwind CSS and shadcn/ui | Operations-center layout, panels, status labels, and accessible controls |
+| UI | Plain CSS now; Tailwind CSS and shadcn/ui later if needed | Functional panels, status labels, and accessible controls |
 | Client state | TanStack Query and Zustand | Server data/cache plus local playback, selection, and timeline state |
-| Map | MapLibre GL JS | Incident-context map with approximate camera and supported-location markers |
-| Reconstruction | React Flow | Clickable 2D statement-based scene with nodes, movement arrows, and alternate interpretations |
+| Map (deferred) | MapLibre GL JS | Incident-context map with approximate camera and supported-location markers |
+| Reconstruction (deferred) | React Flow | Clickable 2D statement-based scene with nodes, movement arrows, and alternate interpretations |
 | API | Python, FastAPI, Pydantic | Typed HTTP API and validation for incidents, recordings, observations, sitreps, and corrections |
 | Persistence | PostgreSQL, SQLAlchemy, Alembic | Durable, queryable, versioned evidence and report state |
 | Object storage | Local filesystem for development; S3-compatible storage when hosted | Store uploaded videos, released clips, and source media outside PostgreSQL |
 | Media | FFmpeg and native HTML video | Duration/format validation, audio extraction, clip generation, and source playback |
-| Background jobs | Celery with Redis | Incremental transcription/extraction, retries, progress, and backlog visibility |
-| Live updates | Server-Sent Events (SSE) | Push job progress and new sitrep versions to the dashboard |
-| Runtime | Docker Compose | Reproducible local API, worker, Redis, PostgreSQL, and frontend services |
+| Background jobs (deferred) | Celery with Redis | Incremental transcription/extraction, retries, progress, and backlog visibility |
+| Live updates | HTTP playback polling now; SSE later | Shared replay state now; worker progress and sitrep versions later |
+| Runtime | Docker Compose | Local API, PostgreSQL, and frontend services; worker and Redis later |
 
-Keep transcription and language-model providers behind interfaces. The provider is an implementation detail; the durable contract is the validated observation schema and its source citations. Select models by testing the staged recordings for timestamp quality, extraction accuracy, cost, and processing delay.
+When the processing milestone begins, keep transcription and language-model providers behind interfaces. The provider is an implementation detail; the durable contract will be the validated observation schema and its source citations. Select models by testing the staged recordings for timestamp quality, extraction accuracy, cost, and processing delay.
 
 ## System shape
 
 ```text
-Browser dashboard
-    | REST + SSE
-FastAPI API  -------- PostgreSQL (incidents, observations, sitrep versions, corrections)
-    |                         |
-    | dispatches jobs         | source metadata and run state
-Redis queue  ----------- Celery media worker
+Browser dashboard (React)
+    | HTTP API, playback polling, byte-range video requests
+FastAPI API -------- PostgreSQL (incidents, recordings, playback runs)
     |
-FFmpeg -> timestamped audio segment -> transcription -> structured observation extraction
-    |
-cross-camera grouping -> status/history/conflict handling -> cited sitrep + reconstruction state
+    +-- FFprobe + FFmpeg: validate incoming media
+    +-- Local media volume: validated original recordings
 ```
 
-The backend owns the simulation cutoff. When the incident clock advances, it releases only the eligible 10-second media segments (configurable). A model must never receive the complete recording or any media beyond the current cutoff. The browser may inspect an already released source clip without advancing the main clock.
+The backend owns the simulation cutoff. In the later processing milestone, it will release only eligible segments (initially 10 seconds, configurable). No model may receive the complete recording or media beyond that cutoff. The current media route serves original recordings for synchronized playback; it is not a processing or cutoff-enforcement API and must never be connected directly to a model.
 
 ## Core domain rules
 
@@ -70,9 +72,9 @@ These rules are correctness requirements, not optional UI behavior:
 9. **Corrections are additive.** Preserve the original extraction and record reviewer corrections or exclusions separately. Reports and reconstruction must honor the effective reviewed state.
 10. **Lag is honest.** Display current playback time, latest analyzed time, worker status, errors, and backlog. A 10-second release interval is not an end-to-end latency promise.
 
-## Minimum data model
+## Target MVP data model
 
-The initial schema should cover these records. Add fields only when they support a requirement or an observed implementation need.
+The current schema contains only incidents, recordings, and playback runs. The remaining records below belong to the later processing milestone. Add fields only when they support a requirement or an observed implementation need.
 
 - **Incident:** ID, title, context, simulation clock, active run ID, and lifecycle status.
 - **Recording:** ID, incident ID, camera label, file/object reference, format, duration, start offset, validation status, and processing status.
@@ -95,7 +97,7 @@ The incident workspace should follow this order:
 
 Selecting a marker, feed, reconstruction object, or sitrep item stays within the same incident context and opens linked observations and source clips. Selection and evidence review must not advance the main clock or expose unreleased media.
 
-## Processing workflow
+## Target processing workflow (later milestone)
 
 1. Create an incident and upload two or three short MP4 recordings.
 2. Validate media, calculate duration, assign camera labels, and manually set start offsets.
@@ -108,7 +110,7 @@ Selecting a marker, feed, reconstruction object, or sitrep item stays within the
 9. Derive the reconstruction from the same observations.
 10. Allow source review, correction, or exclusion, then regenerate affected views while retaining history.
 
-## Build order
+## Full MVP build order
 
 Implement and verify in this order:
 
@@ -132,12 +134,66 @@ Using two short staged recordings, demonstrate that:
 - Correcting an extraction changes the sitrep without destroying the original source record.
 - Future information never appears early, and per-feed lag or failure is visible.
 
-## Local development expectations
+## Local development
 
-Once the application scaffold exists, provide one documented command to start the full local stack with Docker Compose and separate commands for frontend, API, worker, migrations, linting, and tests. New agents should be able to clone the repository, copy an example environment file, start dependencies, and run the verification suite without manually editing production code.
+The normal stack requires Docker with Docker Compose:
+
+```sh
+cp .env.example .env
+docker compose up --build
+```
+
+Open [the dashboard](http://localhost:5173) or [API documentation](http://localhost:8000/docs). The API applies migrations before starting. PostgreSQL and media use separate named volumes that persist through ordinary restarts and `docker compose down`. The local stack binds published ports to loopback; authentication and production deployment are deferred. Do not use `docker compose down -v` unless you intend to erase both stored metadata and uploaded media.
+
+For development outside Docker, use Node 22.12+ and Python 3.12+. From the repository root:
+
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install -e 'apps/api[test]'
+npm ci
+cp .env.example .env
+```
+
+Run these in separate terminals:
+
+```sh
+npm run dev:db
+npm run dev:api
+npm run dev
+```
+
+`dev:db` runs a project-local PostgreSQL instance and preserves its data in `.data/postgres`. It is an alternative to the Compose database; run only one on port 5432. `dev:api` runs migrations then the API, using the project-local FFmpeg/FFprobe binaries installed with npm. Set `FFMPEG_BINARY` and `FFPROBE_BINARY` to use system binaries instead. Vite forwards `/api` requests to `127.0.0.1:8000` (`API_PROXY_TARGET` overrides this during development). Native and Docker data directories are independent.
+
+Useful commands:
+
+```sh
+npm run api:migrate
+npm run typecheck
+npm run lint
+npm run test
+npm run test:api
+npm run build
+npm run test:e2e
+```
+
+Browser tests require the running API and web app, plus installed Google Chrome. They create real synthetic MP4 files and disposable incidents labeled `E2E`; they never seed synthetic analysis into the application. They preserve created incidents for inspection. Override `E2E_BASE_URL`, `E2E_API_URL`, and `E2E_BROWSER_CHANNEL` as needed. Tests use the npm-installed FFmpeg binary by default (`FFMPEG_BINARY` overrides it). API unit tests use isolated temporary SQLite databases; set `TEST_DATABASE_URL` to a local test database to run the same suite with PostgreSQL. Each case creates and removes only its own random database schema.
+
+### Verification record
+
+Verified locally on September 11, 2026, with Python 3.12, Node 26, PostgreSQL 18.4, and Google Chrome. Docker and CI use PostgreSQL 17 and Node 22; their execution remains pending.
+
+- Frontend TypeScript checks, ESLint, seven clock/alignment unit tests, and production build pass.
+- All 24 API tests pass on SQLite and again on PostgreSQL: real media validation and byte ranges, invalid/truncated/oversized files, the shared validation deadline, persistent state, new runs, concurrent controls, three-camera limits, upload/playback races, and commit-failure cleanup.
+- Four browser scenarios pass: real uploads/alignment/reload/resume/restart; independent feed completion; corrupt upload rejection; lost-clock connection and recovery.
+- Dependency audit reports no known npm vulnerabilities for the installed lockfile.
+- A process crash between moving a validated file into storage and committing its row can leave an unreferenced file. Normal failure paths remove staged files; orphan recovery and power-loss durability need a later storage-hardening pass.
+
+The GitHub Actions workflow repeats checks against PostgreSQL, validates Compose configuration, and runs the browser suite. It has been added locally, not triggered or published.
+
+Worker commands do not exist yet because the processing workflow is deferred.
 
 Every feature change must update this README's status section and include the relevant verification result. Prefer small, reviewable changes that preserve the domain rules above. Do not add accounts, multi-user collaboration, live camera integrations, automatic clock synchronization, facial recognition, cross-camera person identification, tactical recommendations, automated report filing, calibrated probability scores, production agency integrations, full 3D reconstruction, or continuous visual analysis unless the scope is explicitly changed.
 
 ## Questions and current assumptions
 
-There are no blocking questions for scaffolding the project. This README assumes a single-incident MVP, prerecorded MP4 input, manual synchronization, local development through Docker Compose, and a replaceable transcription/LLM provider. Decisions that need to be made before implementation are the first model provider, map tile provider, authentication boundary if deployment is required, and the target hosting environment; none changes the core domain model.
+The user approved React/TypeScript, FastAPI, PostgreSQL, Docker Compose, real uploads, manual alignment, and synchronized replay for this milestone, with particular emphasis on correctness. Processing is deferred and analysis views stay empty until real results exist. The first model provider, map tiles, authentication boundary, and hosting environment are decisions for later milestones.

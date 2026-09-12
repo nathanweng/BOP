@@ -1,0 +1,77 @@
+name: Foundation checks
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: bop
+          POSTGRES_PASSWORD: bop_local
+          POSTGRES_DB: bop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bop -d bop"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+psycopg://bop:bop_local@127.0.0.1:5432/bop
+      TEST_DATABASE_URL: postgresql+psycopg://bop:bop_local@127.0.0.1:5432/bop
+      FFMPEG_BINARY: /usr/bin/ffmpeg
+      FFPROBE_BINARY: /usr/bin/ffprobe
+      E2E_BROWSER_CHANNEL: chromium
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+          python -m venv .venv
+          .venv/bin/python -m pip install -e 'apps/api[test]'
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Typecheck, lint, unit tests, and build
+        run: |
+          npm run typecheck
+          npm run lint
+          npm run test
+          npm run test:api
+          npm run build
+          docker compose config --quiet
+      - name: Browser regression tests
+        run: |
+          npm run dev:api > /tmp/bop-api.log 2>&1 &
+          api_pid=$!
+          npm run dev > /tmp/bop-web.log 2>&1 &
+          web_pid=$!
+          trap 'kill "$api_pid" "$web_pid" || true' EXIT
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8000/api/health && curl -fsS http://127.0.0.1:5173/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: foundation-failure-diagnostics
+          path: |
+            test-results/
+            playwright-report/
+            /tmp/bop-api.log
+            /tmp/bop-web.log

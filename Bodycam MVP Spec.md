@@ -7,6 +7,14 @@ The primary inputs are witness and responder speech captured in body-camera audi
 
 The MVP uses prerecorded footage replayed as synchronized feeds to simulate an unfolding incident. Direct camera streaming is outside this build. The system may access only media up to the current simulation time when generating observations and summaries.
 
+## Current implementation milestone: upload and replay foundation
+
+Implement incident creation, durable MP4 storage and validation, manual start offsets, and synchronized replay with a backend-owned incident clock. Prioritize reliability and functional structure over visual polish. The main stage reserves the map area and plays actual uploaded body-camera recordings; the reconstruction area follows it.
+
+Processing steps in the full MVP specification below are future requirements. Do not implement segment scheduling, transcription, observation extraction, grouping, sitrep generation, reconstruction generation, or their placeholder services/interfaces in this milestone. Map/location, reconstruction, sitrep, history, and evidence areas use honest empty states until their supported data exists. No fabricated incident facts or mock analysis results.
+
+Foundation acceptance: two valid recordings can be uploaded, saved, aligned, replayed, paused, resumed, and restarted. Reload restores the saved incident, alignment, and backend playback state. Invalid files and storage failures produce actionable errors. Delayed feeds remain stopped before their offsets, completed feeds are labeled, stale playback commands cannot override newer state, and restart creates a new run at zero. Verify this with real media and PostgreSQL in addition to isolated tests.
+
 ## 1. Create an incident and upload recordings
 - Create one incident workspace with a title and optional user-supplied context.
 - Upload two or three short body-camera videos of the same incident; support one declared format such as MP4 for the MVP.
@@ -98,7 +106,9 @@ Upload and alignment can be a simple setup screen. Accounts, multiuser collabora
 Keep observations as the underlying record so a generated summary cannot erase details or become its own unsupported evidence.
 
 ## Processing flow
-Uploaded files → aligned replay → map/live body-camera main stage → released segments → per-camera transcription and statement analysis → structured observations → cross-camera grouping and status updates → cited sitrep → statement-based reconstruction scene.
+Current foundation: uploaded files → validated durable recordings → manual alignment → shared incident replay → map/body-camera main stage.
+
+Later processing: eligible released segments → per-camera transcription and statement analysis → structured observations → cross-camera grouping and status updates → cited sitrep and statement-based reconstruction. Both analysis views consume the same observations; neither is an input to media playback.
 
 ## Definition of done
 Using two short recordings of a staged incident, demonstrate:

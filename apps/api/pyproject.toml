@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bop-api"
+version = "0.1.0"
+description = "Durable incident media and synchronized playback foundation"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi==0.135.1",
+  "starlette==1.6.0",
+  "uvicorn==0.41.0",
+  "SQLAlchemy==2.0.48",
+  "alembic==1.18.4",
+  "psycopg[binary]==3.3.3",
+  "python-multipart==0.0.22",
+]
+
+[project.optional-dependencies]
+test = ["pytest==9.0.2", "httpx==0.28.1"]
+
+[tool.setuptools.packages.find]
+include = ["bop_api*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
