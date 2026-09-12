@@ -93,4 +93,8 @@ export interface ClockSample {
   receivedAt: number;
 }
 
-export type PlaybackAction = 'play' | 'pause' | 'restart';
+export type PlaybackAction = 'play' | 'pause' | 'restart' | 'seek';
+
+export type PlaybackCommand =
+  | { action: 'play' | 'pause' | 'restart' }
+  | { action: 'seek'; positionSeconds: number };

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, messageFor } from './api';
 import { acceptClockSample, incidentPosition } from './clock';
-import type { ClockSample, Playback, PlaybackAction } from './types';
+import type { ClockSample, Playback, PlaybackAction, PlaybackCommand } from './types';
 
 export function useReplay(incidentId: string, initial: Playback) {
   const queryClient = useQueryClient();
@@ -53,7 +53,7 @@ export function useReplay(incidentId: string, initial: Playback) {
   }, []);
 
   const command = useMutation({
-    mutationFn: (action: PlaybackAction) => api.controlPlayback(incidentId, action, sampleRef.current.playback.revision),
+    mutationFn: (input: PlaybackCommand) => api.controlPlayback(incidentId, input, sampleRef.current.playback.revision),
     onSuccess: (next) => {
       accept(next);
       queryClient.setQueryData(['playback', incidentId], next);
@@ -72,12 +72,12 @@ export function useReplay(incidentId: string, initial: Playback) {
       accept(fresh);
       if (fresh.playback.state === 'playing') {
         try {
-          fresh = await api.controlPlayback(incidentId, 'pause', fresh.playback.revision);
+          fresh = await api.controlPlayback(incidentId, { action: 'pause' }, fresh.playback.revision);
         } catch (failure) {
           if (!(failure instanceof ApiError) || failure.status !== 409) throw failure;
           fresh = await api.getPlayback(incidentId);
           if (fresh.playback.state === 'playing') {
-            fresh = await api.controlPlayback(incidentId, 'pause', fresh.playback.revision);
+            fresh = await api.controlPlayback(incidentId, { action: 'pause' }, fresh.playback.revision);
           }
         }
       }
@@ -110,11 +110,12 @@ export function useReplay(incidentId: string, initial: Playback) {
     }
   }, [holdReason, playbackQuery.data, playbackQuery.isError, pauseAfterFault]);
 
-  const control = async (action: PlaybackAction) => {
+  const control = async (input: PlaybackAction | PlaybackCommand) => {
+    const request: PlaybackCommand = typeof input === 'string' ? { action: input } as PlaybackCommand : input;
     setError(null);
     try {
-      await command.mutateAsync(action);
-      if (action !== 'pause') { setHoldReason(null); setHoldPosition(null); }
+      await command.mutateAsync(request);
+      if (request.action !== 'pause') { setHoldReason(null); setHoldPosition(null); }
     } catch (failure) {
       setError(messageFor(failure));
       if (failure instanceof ApiError && failure.status === 409) {

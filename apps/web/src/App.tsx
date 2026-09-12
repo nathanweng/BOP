@@ -86,6 +86,32 @@ export default function App() {
   );
 }
 
+function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }: {
+  title: string;
+  body: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onCancel]);
+  return (
+    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(event) => event.stopPropagation()}>
+        <h2 id="confirm-title">{title}</h2>
+        <p>{body}</p>
+        <div className="modal-actions">
+          <button type="button" onClick={onCancel}>Cancel</button>
+          <button type="button" className="danger" onClick={onConfirm} data-testid="confirm-clear">{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function CreateIncident({ onCreated }: { onCreated: (incident: Incident) => Promise<void> }) {
   const [title, setTitle] = useState('');
   const [context, setContext] = useState('');
@@ -115,7 +141,9 @@ function Workspace({ incident }: { incident: Incident }) {
   const [audioEnabled, setAudioEnabled] = useState(false);
   const [readyById, setReadyById] = useState<Record<string, boolean>>({});
   const [setupBusy, setSetupBusy] = useState(false);
-  const setupLocked = replay.playback.state !== 'paused' || replay.position > 0;
+  const [scrubbing, setScrubbing] = useState(false);
+  const [scrubValue, setScrubValue] = useState(0);
+  const [confirmClear, setConfirmClear] = useState(false);
   const hasCameras = incident.recordings.length >= 1;
   const mediaReady = hasCameras && incident.recordings.every((recording) => readyById[recording.id]);
   const selected = incident.recordings.find((recording) => recording.id === selectedId);
@@ -132,6 +160,11 @@ function Workspace({ incident }: { incident: Incident }) {
     for (const entry of transcripts.data.recordings) transcriptsByRecording[entry.recording_id] = entry;
   }
   const transcriptionConfigured = transcripts.data?.transcription_configured ?? false;
+  const hasTranscriptSegments = Boolean(transcripts.data?.recordings.some((entry) => entry.segments.length > 0));
+  // Uploads and alignment must stay locked after any playback has happened so
+  // that transcripts and event history remain consistent with the recordings
+  // they were derived from. Seeking back to zero does not unlock.
+  const setupLocked = replay.playback.state !== 'paused' || replay.position > 0 || hasTranscriptSegments;
 
   const saved = useCallback(async () => {
     await Promise.all([
@@ -144,25 +177,94 @@ function Workspace({ incident }: { incident: Incident }) {
     setReadyById((previous) => previous[id] === ready ? previous : { ...previous, [id]: ready });
   }, []);
 
-  const ending = replay.position >= replay.playback.duration_seconds && replay.playback.duration_seconds > 0;
-  const stateLabel = replay.holdReason ? 'Paused locally' : ending ? 'Ended' : replay.playback.state === 'playing' ? 'Playing' : 'Paused';
+  const duration = replay.playback.duration_seconds;
+  const ending = replay.position >= duration && duration > 0;
+  const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? 'Playing' : 'Paused';
+  const displayPosition = scrubbing ? scrubValue : replay.position;
+  // "Processed" cutoff = strict high water mark of segments the shared clock
+  // has released for transcription. It does NOT extend to the current playback
+  // position, so the scrubber can visibly distinguish the played region from
+  // the transcribed region during forward playback ahead of transcription.
+  let processedCutoff = 0;
+  if (transcripts.data) {
+    for (const feed of transcripts.data.recordings) {
+      for (const segment of feed.segments) {
+        if (segment.incident_end_seconds > processedCutoff) processedCutoff = segment.incident_end_seconds;
+      }
+    }
+  }
+  if (duration > 0 && processedCutoff > duration) processedCutoff = duration;
+  const processedPct = duration > 0 ? Math.min(100, (processedCutoff / duration) * 100) : 0;
+  const playedPct = duration > 0 ? Math.min(100, (displayPosition / duration) * 100) : 0;
+  const scrubberDisabled = !hasCameras || !replay.connected || replay.pending || setupBusy || duration <= 0 || processedCutoff <= 0;
+  const resetDisabled = !replay.connected || replay.pending || setupBusy || !hasCameras || (replay.playback.state === 'paused' && replay.position === 0);
+  const clearDisabled = !replay.connected || replay.pending || setupBusy || incident.recordings.length === 0;
+
+  const clampToProcessed = (value: number) => Math.min(processedCutoff, Math.max(0, value));
+
+  const beginScrub = () => {
+    if (scrubberDisabled) return;
+    if (replay.playing) void replay.control('pause');
+    setScrubValue(clampToProcessed(replay.position));
+    setScrubbing(true);
+  };
+
+  const commitScrub = (value: number) => {
+    setScrubbing(false);
+    void replay.control({ action: 'seek', positionSeconds: clampToProcessed(value) });
+  };
+
+  const confirmClearHistory = () => {
+    setConfirmClear(false);
+    void replay.control('restart');
+  };
 
   return <div className="workspace">
     <div className="incident-heading"><h2>{incident.title}</h2>{incident.context && <p className="context">{incident.context}</p>}</div>
     <details className="panel setup-panel" open>
       <summary>Recording setup · {incident.recordings.length} {incident.recordings.length === 1 ? 'camera' : 'cameras'}</summary>
       <p>Offsets are seconds after the incident begins. For example, a camera offset of 2 starts when the shared clock reaches 00:02.0.</p>
-      {setupLocked && <p className="notice">Restart replay to unlock uploads and alignment. Restart resets the incident clock to zero and creates a new run.</p>}
+      {setupLocked && <p className="notice">Use “Clear all history” to unlock uploads and alignment. Clearing history creates a new run and removes the current run's transcripts and event history.</p>}
       <UploadRecording incident={incident} disabled={setupLocked || setupBusy} onBusy={setSetupBusy} onSaved={saved} />
       <div className="recording-settings">{incident.recordings.map((recording) => <AlignmentForm key={recording.id} incidentId={incident.id} recording={recording} disabled={setupLocked || setupBusy} onBusy={setSetupBusy} onSaved={saved} />)}</div>
     </details>
 
     <section className="playback-bar" aria-label="Shared replay controls">
-      <div><span className="muted">Incident clock · {stateLabel}</span><output data-testid="incident-clock" data-seconds={replay.position.toFixed(3)} className="clock" aria-label="Incident playback time">{formatTime(replay.position)} <small>/ {formatTime(replay.playback.duration_seconds)}</small></output></div>
+      <div className="clock-column">
+        <span className="muted">Incident clock · {stateLabel}</span>
+        <output data-testid="incident-clock" data-seconds={displayPosition.toFixed(3)} className="clock" aria-label="Incident playback time">{formatTime(displayPosition)} <small>/ {formatTime(duration)}</small></output>
+        <div
+          className={`scrubber-track${scrubberDisabled ? ' is-disabled' : ''}`}
+          style={{ ['--played' as string]: `${playedPct}%`, ['--processed' as string]: `${processedPct}%` }}
+        >
+          <input
+            type="range"
+            className="scrubber"
+            aria-label="Scrub incident timeline"
+            aria-valuemin={0}
+            aria-valuemax={processedCutoff}
+            aria-valuenow={displayPosition}
+            data-testid="incident-scrubber"
+            data-processed-seconds={processedCutoff.toFixed(3)}
+            min={0}
+            max={duration > 0 ? duration : 0}
+            step={0.1}
+            value={displayPosition}
+            disabled={scrubberDisabled}
+            onPointerDown={beginScrub}
+            onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) beginScrub(); }}
+            onChange={(event) => setScrubValue(clampToProcessed(Number(event.target.value)))}
+            onPointerUp={(event) => { if (scrubbing) commitScrub(Number((event.target as HTMLInputElement).value)); }}
+            onBlur={(event) => { if (scrubbing) commitScrub(Number(event.target.value)); }}
+            onKeyUp={(event) => { if (scrubbing && ['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) commitScrub(Number((event.target as HTMLInputElement).value)); }}
+          />
+        </div>
+      </div>
       <div className="button-row">
-        <button type="button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending}>Play</button>
+        <button type="button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
         <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy}>Pause</button>
-        <button type="button" onClick={() => void replay.control('restart')} disabled={!replay.connected || replay.pending || setupBusy || incident.recordings.length === 0}>Restart</button>
+        <button type="button" onClick={() => void replay.control({ action: 'seek', positionSeconds: 0 })} disabled={resetDisabled} data-testid="reset-to-start">Reset to 0</button>
+        <button type="button" className="danger" onClick={() => setConfirmClear(true)} disabled={clearDisabled} data-testid="clear-history">Clear all history</button>
         <label className="audio-choice"><input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} disabled={!selected} />Enable selected camera audio</label>
       </div>
       {!hasCameras && <p className="control-help">Upload a recording to start replay.</p>}
@@ -172,6 +274,14 @@ function Workspace({ incident }: { incident: Incident }) {
       {replay.error && <p className="error" role="alert">{replay.error}</p>}
       {!replay.connected && <button type="button" onClick={replay.reconnect}>Reconnect replay</button>}
     </section>
+
+    {confirmClear && <ConfirmDialog
+      title="Clear all history?"
+      body="This deletes the current run's transcripts and event history and resets the incident clock to zero. Uploaded recordings stay in place. This cannot be undone."
+      confirmLabel="Clear all history"
+      onConfirm={confirmClearHistory}
+      onCancel={() => setConfirmClear(false)}
+    />}
 
     <section className="panel main-stage" aria-labelledby="stage-heading">
       <div className="section-heading"><h2 id="stage-heading">Incident map and body-camera view</h2><span className="status">Simulated replay</span></div>
@@ -192,6 +302,7 @@ function Workspace({ incident }: { incident: Incident }) {
             runId={replay.playback.run_id}
             transcript={transcriptsByRecording[recording.id]}
             transcriptConfigured={transcriptionConfigured}
+            transcriptCutoffSeconds={replay.position}
             onSelect={() => select(incident.id, recording.id)}
             onProblem={replay.halt}
             onReady={onReady}

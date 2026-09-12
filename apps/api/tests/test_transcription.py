@@ -260,6 +260,40 @@ def test_restart_isolates_transcripts_between_runs(transcribing_client, media_fi
         assert feed["latest_analyzed_time_seconds"] is None
 
 
+def test_seek_preserves_transcripts_within_run(transcribing_client, media_fixture, clock):
+    client, app, transcriber = transcribing_client
+    prepared = _prepared(client, media_fixture, offsets=(0, 0))
+    incident_id = prepared["id"]
+    started = client.post(
+        f"/api/incidents/{incident_id}/playback",
+        json={"action": "play", "expected_revision": prepared["playback"]["revision"]},
+    ).json()
+    clock.advance(4.0)
+    client.get(f"/api/incidents/{incident_id}/playback")
+    app.state.transcription.process_pending()
+    before = client.get(f"/api/incidents/{incident_id}/transcripts").json()
+    assert all(len(feed["segments"]) == 1 for feed in before["recordings"])
+    calls_before = len(transcriber.calls)
+
+    seek = client.post(
+        f"/api/incidents/{incident_id}/playback",
+        json={"action": "seek", "expected_revision": started["revision"], "position_seconds": 0},
+    ).json()
+    assert seek["run_id"] == started["run_id"]
+    assert seek["state"] == "paused"
+    assert seek["position_seconds"] == 0
+
+    after = client.get(f"/api/incidents/{incident_id}/transcripts").json()
+    assert after["run_id"] == started["run_id"]
+    for feed_before, feed_after in zip(before["recordings"], after["recordings"]):
+        assert feed_after["segments"] == feed_before["segments"]
+        assert feed_after["latest_analyzed_time_seconds"] == feed_before["latest_analyzed_time_seconds"]
+
+    # Re-enqueueing after a seek must not call the transcriber again.
+    app.state.transcription.process_pending()
+    assert len(transcriber.calls) == calls_before
+
+
 def test_paused_playback_freezes_release(transcribing_client, media_fixture, clock):
     client, app, _ = transcribing_client
     prepared = _prepared(client, media_fixture, offsets=(0, 0))

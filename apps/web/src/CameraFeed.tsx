@@ -11,12 +11,13 @@ interface Props {
   runId: string;
   transcript?: RecordingTranscript;
   transcriptConfigured: boolean;
+  transcriptCutoffSeconds: number;
   onSelect: () => void;
   onProblem: (message: string) => void;
   onReady: (id: string, ready: boolean) => void;
 }
 
-export function CameraFeed({ recording, incidentTime, playing, selected, audioEnabled, runId, transcript, transcriptConfigured, onSelect, onProblem, onReady }: Props) {
+export function CameraFeed({ recording, incidentTime, playing, selected, audioEnabled, runId, transcript, transcriptConfigured, transcriptCutoffSeconds, onSelect, onProblem, onReady }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playPending = useRef(false);
   const syncRef = useRef<() => void>(() => undefined);
@@ -138,7 +139,7 @@ export function CameraFeed({ recording, incidentTime, playing, selected, audioEn
         <span>Location: unknown</span>
       </div>
       {mediaError && <div className="feed-error"><p role="alert">{mediaError}</p><button type="button" onClick={retryMedia} disabled={playing}>Reload media</button></div>}
-      <TranscriptPanel recordingLabel={recording.camera_label} transcript={transcript} transcriptConfigured={transcriptConfigured} recordingId={recording.id} />
+      <TranscriptPanel recordingLabel={recording.camera_label} transcript={transcript} transcriptConfigured={transcriptConfigured} recordingId={recording.id} cutoffSeconds={transcriptCutoffSeconds} />
     </article>
   );
 }
@@ -148,6 +149,7 @@ interface TranscriptPanelProps {
   recordingLabel: string;
   transcript: RecordingTranscript | undefined;
   transcriptConfigured: boolean;
+  cutoffSeconds: number;
 }
 
 function latestCompletedSegment(segments: TranscriptSegment[]): TranscriptSegment | null {
@@ -170,9 +172,13 @@ function SpeakerTurnLines({ turns, className }: { turns: TranscriptTurn[]; class
   );
 }
 
-function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptConfigured }: TranscriptPanelProps) {
+function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptConfigured, cutoffSeconds }: TranscriptPanelProps) {
   const [expanded, setExpanded] = useState(false);
-  const segments = transcript?.segments ?? [];
+  const allSegments = transcript?.segments ?? [];
+  // Only surface segments whose playback window has already been reached, so
+  // scrubbing the shared clock backward hides transcripts that belong to a
+  // later part of the timeline.
+  const segments = allSegments.filter((segment) => segment.incident_start_seconds <= cutoffSeconds + 1e-6);
   const inFlight = segments.filter((segment) => segment.status === 'queued' || segment.status === 'processing').length;
   const completed = segments.filter((segment) => segment.status === 'completed');
   const failed = segments.filter((segment) => segment.status === 'failed');

@@ -151,6 +151,45 @@ def test_authoritative_clock_pause_and_restart(client, prepared, clock, app, med
         assert len(list(session.scalars(select(PlaybackRun)))) == 2
 
 
+def test_seek_preserves_run_and_clamps(client, prepared, clock):
+    incident_id = prepared["id"]
+    duration = prepared["playback"]["duration_seconds"]
+    started = control(client, incident_id, "play", prepared["playback"]["revision"]).json()
+    clock.advance(1.5)
+    live = client.get(f"/api/incidents/{incident_id}/playback").json()
+    assert live["state"] == "playing"
+
+    seek = client.post(f"/api/incidents/{incident_id}/playback",
+                       json={"action": "seek", "expected_revision": started["revision"], "position_seconds": 0.5}).json()
+    assert seek["run_id"] == started["run_id"]
+    assert seek["state"] == "paused"
+    assert seek["position_seconds"] == pytest.approx(0.5)
+
+    # Clock does not advance while paused after a seek.
+    clock.advance(10)
+    assert client.get(f"/api/incidents/{incident_id}/playback").json()["position_seconds"] == pytest.approx(0.5)
+
+    # Seeking past the duration clamps and ends playback.
+    ended = client.post(f"/api/incidents/{incident_id}/playback",
+                        json={"action": "seek", "expected_revision": seek["revision"], "position_seconds": duration + 100}).json()
+    assert ended["state"] == "ended"
+    assert ended["position_seconds"] == pytest.approx(duration)
+    assert ended["run_id"] == started["run_id"]
+
+
+@pytest.mark.parametrize("payload,status", [
+    ({"action": "seek", "expected_revision": 0}, 422),
+    ({"action": "play", "expected_revision": 0, "position_seconds": 1.0}, 422),
+    ({"action": "pause", "expected_revision": 0, "position_seconds": 1.0}, 422),
+    ({"action": "restart", "expected_revision": 0, "position_seconds": 1.0}, 422),
+    ({"action": "seek", "expected_revision": 0, "position_seconds": -1}, 422),
+    ({"action": "seek", "expected_revision": 0, "position_seconds": 86_401}, 422),
+])
+def test_playback_command_validation(client, prepared, payload, status):
+    response = client.post(f"/api/incidents/{prepared['id']}/playback", json=payload)
+    assert response.status_code == status
+
+
 def test_end_clamps_to_latest_offset_plus_duration(client, prepared, clock):
     started = control(client, prepared["id"], "play", prepared["playback"]["revision"]).json()
     clock.advance(100)
