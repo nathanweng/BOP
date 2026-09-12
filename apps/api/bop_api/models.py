@@ -93,3 +93,10 @@ class TranscriptSegment(Base):
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class EventHistory(Base):
+    __tablename__ = "event_histories"
+
+    run_id: Mapped[str] = mapped_column(ForeignKey("playback_runs.id"), primary_key=True)
+    events_json: Mapped[str] = mapped_column(Text)

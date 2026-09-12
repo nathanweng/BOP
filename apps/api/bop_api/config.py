@@ -12,6 +12,8 @@ class Settings:
     ffmpeg_binary: str = "ffmpeg"
     ffprobe_binary: str = "ffprobe"
     xai_api_key: str = ""
+    openrouter_api_key: str = ""
+    openrouter_model: str = "openai/gpt-4o-mini"
     xai_stt_url: str = "https://api.x.ai/v1/stt"
     xai_stt_language: str = "en"
     xai_stt_timeout_seconds: float = 90
@@ -30,6 +32,8 @@ class Settings:
             ffmpeg_binary=os.getenv("FFMPEG_BINARY", "ffmpeg"),
             ffprobe_binary=os.getenv("FFPROBE_BINARY", "ffprobe"),
             xai_api_key=os.getenv("XAI_API_KEY", "").strip(),
+            openrouter_api_key=os.getenv("OPENROUTER_API_KEY", "").strip(),
+            openrouter_model=os.getenv("OPENROUTER_MODEL", cls.openrouter_model).strip(),
             xai_stt_url=os.getenv("XAI_STT_URL", cls.xai_stt_url),
             xai_stt_language=os.getenv("XAI_STT_LANGUAGE", cls.xai_stt_language),
             xai_stt_timeout_seconds=float(os.getenv("XAI_STT_TIMEOUT_SECONDS", "90")),

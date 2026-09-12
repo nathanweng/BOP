@@ -1,4 +1,4 @@
-import type { ClockSample, Incident, IncidentSummary, Playback, PlaybackAction, Recording, Transcripts } from './types';
+import type { ClockSample, EventHistoryData, Incident, IncidentSummary, Playback, PlaybackAction, Recording, Transcripts } from './types';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -49,6 +49,8 @@ function sample(playback: Playback): ClockSample {
 }
 
 export const api = {
+  getEvents: (id: string, signal?: AbortSignal) => request<EventHistoryData>(`/incidents/${id}/events`, { signal }),
+  generateEvents: (id: string) => request<EventHistoryData>(`/incidents/${id}/events`, { method: 'POST' }, 120000),
   listIncidents: (signal?: AbortSignal) => request<IncidentSummary[]>('/incidents', { signal }),
   getIncident: (id: string, signal?: AbortSignal) => request<Incident>(`/incidents/${id}`, { signal }),
   createIncident: (title: string, context: string) => request<Incident>('/incidents', {

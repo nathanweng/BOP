@@ -46,6 +46,25 @@ export interface Transcripts {
   recordings: RecordingTranscript[];
 }
 
+export interface HistoryEvent {
+  id: string;
+  segment_id: string;
+  recording_id: string;
+  timestamp_seconds: number;
+  local_seconds: number;
+  title: string;
+  status: 'current' | 'outdated' | 'disproven';
+  status_timestamp_seconds?: number;
+  status_local_seconds?: number;
+  status_recording_id?: string;
+}
+
+export interface EventHistoryData {
+  run_id: string;
+  configured: boolean;
+  events: HistoryEvent[];
+}
+
 export interface Playback {
   run_id: string;
   state: 'paused' | 'playing' | 'ended';
