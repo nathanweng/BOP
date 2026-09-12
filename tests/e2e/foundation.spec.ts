@@ -28,7 +28,7 @@ test('real uploads, alignment and shared replay persist across reload and restar
   await expect(play).toBeDisabled();
 
   const cameraA = await uploadRecording(page, incident.id, mp4Path, 'Camera A', 0);
-  await expect(play).toBeDisabled();
+  await expect(play).toBeEnabled();
   const cameraB = await uploadRecording(page, incident.id, mp4Path, 'Camera B', 2);
   await expect(play).toBeEnabled();
   expect(cameraA.duration_seconds).toBeCloseTo(12, 0);

@@ -127,7 +127,7 @@ Do not commit `.env`, uploaded recordings, local media folders, database folders
 
 The current foundation accepts an MP4 only when it has exactly one 8-bit H.264 4:2:0 video track and no more than one AAC audio track. Silent MP4s are accepted. FFprobe reads metadata and FFmpeg fully decodes the recording before it becomes available. Validation errors are shown to the contributor in the UI and no recording row is created.
 
-The backend owns the incident clock. A camera with a start offset of `2` begins at incident second 2, and its local media time is `incident time - 2`. At least two valid recordings are required to play. Upload and alignment changes are allowed only at the start of a paused run; restart creates a new run at zero. Do not bypass these guards from the client.
+The backend owns the incident clock. A camera with a start offset of `2` begins at incident second 2, and its local media time is `incident time - 2`. At least one valid recording is required to play. Upload and alignment changes are allowed only at the start of a paused run; restart creates a new run at zero. Do not bypass these guards from the client.
 
 ## Verification before a pull request
 

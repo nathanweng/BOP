@@ -19,11 +19,11 @@ The current milestone extends the upload and replay foundation with per-camera l
 
 ### Foundation boundaries
 
-Create an incident, upload two or three MP4 recordings, set when each starts on the incident clock, and replay them together. A start offset of `2` means the camera begins at incident second 2; its local media time is `incident time - 2`. Offsets range from 0 to 86,400 seconds. The duration of the incident is the latest recording end (`offset + duration`).
+Create an incident, upload one or more MP4 recordings, set when each starts on the incident clock, and replay them together. A start offset of `2` means the camera begins at incident second 2; its local media time is `incident time - 2`. Offsets range from 0 to 86,400 seconds. The duration of the incident is the latest recording end (`offset + duration`).
 
 Uploads must contain one 8-bit H.264 video track with 4:2:0 color and at most one AAC audio track. Silent recordings are accepted. FFprobe reads metadata and FFmpeg decodes the media to validate it; no audio is extracted for analysis. The default limit is 512 MiB per file and validation has a timeout. A recording becomes available only after validation and database storage succeed.
 
-The backend persists a run ID, revision, time anchor, and playback position. Browser clocks follow that state; stale playback commands return HTTP 409. At least two recordings are needed to play. Uploading or editing alignment requires a paused run at zero: restart first after replay has begun. Restart creates a new run, preserves earlier run records, and returns the incident to zero. Resume continues the existing run. Closing the browser does not itself pause the backend clock.
+The backend persists a run ID, revision, time anchor, and playback position. Browser clocks follow that state; stale playback commands return HTTP 409. At least one recording is needed to play. Uploading or editing alignment requires a paused run at zero: restart first after replay has begun. Restart creates a new run, preserves earlier run records, and returns the incident to zero. Resume continues the existing run. Closing the browser does not itself pause the backend clock.
 
 ## Recommended stack
 
@@ -101,7 +101,7 @@ Selecting a marker, feed, reconstruction object, or sitrep item stays within the
 
 ## Target processing workflow (later milestone)
 
-1. Create an incident and upload two or three short MP4 recordings.
+1. Create an incident and upload one or more short MP4 recordings.
 2. Validate media, calculate duration, assign camera labels, and manually set start offsets.
 3. Start a run and synchronize replay using the shared incident clock.
 4. Release eligible segments per feed; enqueue work and show queue/lag state.
@@ -185,7 +185,7 @@ Browser tests require the running API and web app, plus installed Google Chrome.
 Verified locally on September 11, 2026, with Python 3.12, Node 26, PostgreSQL 18.4, and Google Chrome. Docker and CI use PostgreSQL 17 and Node 22; their execution remains pending.
 
 - Frontend TypeScript checks, ESLint, seven clock/alignment unit tests, and production build pass.
-- All 24 API tests pass on SQLite and again on PostgreSQL: real media validation and byte ranges, invalid/truncated/oversized files, the shared validation deadline, persistent state, new runs, concurrent controls, three-camera limits, upload/playback races, and commit-failure cleanup.
+- Foundation API tests pass on SQLite and again on PostgreSQL: real media validation and byte ranges, invalid/truncated/oversized files, the shared validation deadline, persistent state, new runs, concurrent controls, single-camera playback, more than three cameras, upload/playback races, and commit-failure cleanup.
 - Four browser scenarios pass: real uploads/alignment/reload/resume/restart; independent feed completion; corrupt upload rejection; lost-clock connection and recovery.
 - Dependency audit reports no known npm vulnerabilities for the installed lockfile.
 - A process crash between moving a validated file into storage and committing its row can leave an unreferenced file. Normal failure paths remove staged files; orphan recovery and power-loss durability need a later storage-hardening pass.

@@ -15,6 +15,7 @@ function incidentFromUrl() {
 export default function App() {
   const queryClient = useQueryClient();
   const [incidentId, setIncidentId] = useState(incidentFromUrl);
+  const [navOpen, setNavOpen] = useState(true);
   const incidents = useQuery({ queryKey: ['incidents'], queryFn: ({ signal }) => api.listIncidents(signal) });
   const incident = useQuery({
     queryKey: ['incident', incidentId],
@@ -44,26 +45,37 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="app-header"><div><p className="eyebrow">Bodycam</p><h1>Incident workspace</h1></div><span className="status">Prerecorded media · Simulated replay</span></header>
-      <div className="app-body">
-        <aside className="sidebar" aria-label="Incident navigation">
-          <section aria-labelledby="create-heading">
-            <h2 id="create-heading">Create an incident</h2>
-            <CreateIncident onCreated={created} />
-          </section>
-          <nav aria-label="Saved incidents">
-            <h2>Saved incidents</h2>
-            {incidents.isPending && <p role="status">Loading incidents…</p>}
-            {incidents.isError && <div><p role="alert">{messageFor(incidents.error)}</p><button onClick={() => void incidents.refetch()}>Retry incidents</button></div>}
-            {incidents.data?.length === 0 && <p className="muted">No incidents yet.</p>}
-            <ul className="incident-list">{incidents.data?.map((entry) => <li key={entry.id}>
-              <button type="button" onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>
-                {entry.title}<small>{new Date(entry.created_at).toLocaleString()}</small>
-              </button>
-            </li>)}</ul>
-          </nav>
+      <div className={`app-body${navOpen ? '' : ' nav-collapsed'}`}>
+        <aside className="sidebar" id="incident-nav" aria-label="Incident navigation">
+          <button
+            type="button"
+            className="sidebar-toggle"
+            aria-expanded={navOpen}
+            aria-controls="incident-nav"
+            onClick={() => setNavOpen((open) => !open)}
+          >
+            {navOpen ? 'Hide incident list' : 'Show incident list'}
+          </button>
+          {navOpen && <>
+            <section aria-labelledby="create-heading">
+              <h2 id="create-heading">Create an incident</h2>
+              <CreateIncident onCreated={created} />
+            </section>
+            <nav aria-label="Saved incidents">
+              <h2>Saved incidents</h2>
+              {incidents.isPending && <p role="status">Loading incidents…</p>}
+              {incidents.isError && <div><p role="alert">{messageFor(incidents.error)}</p><button onClick={() => void incidents.refetch()}>Retry incidents</button></div>}
+              {incidents.data?.length === 0 && <p className="muted">No incidents yet.</p>}
+              <ul className="incident-list">{incidents.data?.map((entry) => <li key={entry.id}>
+                <button type="button" onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>
+                  {entry.title}<small>{new Date(entry.created_at).toLocaleString()}</small>
+                </button>
+              </li>)}</ul>
+            </nav>
+          </>}
         </aside>
         <main id="main-content">
-          {!incidentId && <section className="panel empty-welcome"><h2>Start with the source recordings</h2><p>Create an incident, upload two or three MP4 recordings, then align their start times before beginning synchronized replay.</p><p>Situation reports and reconstruction remain empty until real processing is available.</p></section>}
+          {!incidentId && <section className="panel empty-welcome"><h2>Start with the source recordings</h2><p>Create an incident, upload one or more MP4 recordings, then align their start times before beginning synchronized replay.</p><p>Situation reports and reconstruction remain empty until real processing is available.</p></section>}
           {incidentId && incident.isPending && <p role="status">Loading incident…</p>}
           {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
           {incident.data && <Workspace key={incident.data.id} incident={incident.data} />}
@@ -103,8 +115,8 @@ function Workspace({ incident }: { incident: Incident }) {
   const [readyById, setReadyById] = useState<Record<string, boolean>>({});
   const [setupBusy, setSetupBusy] = useState(false);
   const setupLocked = replay.playback.state !== 'paused' || replay.position > 0;
-  const enoughCameras = incident.recordings.length >= 2;
-  const mediaReady = enoughCameras && incident.recordings.every((recording) => readyById[recording.id]);
+  const hasCameras = incident.recordings.length >= 1;
+  const mediaReady = hasCameras && incident.recordings.every((recording) => readyById[recording.id]);
   const selected = incident.recordings.find((recording) => recording.id === selectedId);
   const transcripts = useQuery({
     queryKey: ['transcripts', incident.id],
@@ -137,7 +149,7 @@ function Workspace({ incident }: { incident: Incident }) {
   return <div className="workspace">
     <div className="incident-heading"><h2>{incident.title}</h2>{incident.context && <p className="context">{incident.context}</p>}</div>
     <details className="panel setup-panel" open>
-      <summary>Recording setup · {incident.recordings.length} of 3 cameras</summary>
+      <summary>Recording setup · {incident.recordings.length} {incident.recordings.length === 1 ? 'camera' : 'cameras'}</summary>
       <p>Offsets are seconds after the incident begins. For example, a camera offset of 2 starts when the shared clock reaches 00:02.0.</p>
       {setupLocked && <p className="notice">Restart replay to unlock uploads and alignment. Restart resets the incident clock to zero and creates a new run.</p>}
       <UploadRecording incident={incident} disabled={setupLocked || setupBusy} onBusy={setSetupBusy} onSaved={saved} />
@@ -152,8 +164,8 @@ function Workspace({ incident }: { incident: Incident }) {
         <button type="button" onClick={() => void replay.control('restart')} disabled={!replay.connected || replay.pending || setupBusy || incident.recordings.length === 0}>Restart</button>
         <label className="audio-choice"><input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} disabled={!selected} />Enable selected camera audio</label>
       </div>
-      {!enoughCameras && <p className="control-help">Upload at least two recordings to start replay.</p>}
-      {enoughCameras && !mediaReady && <p className="control-help" role="status">Waiting for all recording media to be ready.</p>}
+      {!hasCameras && <p className="control-help">Upload a recording to start replay.</p>}
+      {hasCameras && !mediaReady && <p className="control-help" role="status">Waiting for all recording media to be ready.</p>}
       {replay.pending && <p className="control-help" role="status">Updating shared replay…</p>}
       {replay.holdReason && <p className="notice" role="status">{replay.holdReason}</p>}
       {replay.error && <p className="error" role="alert">{replay.error}</p>}
@@ -242,7 +254,7 @@ function UploadRecording({ incident, disabled, onBusy, onSaved }: SetupProps & {
   };
 
   return <form onSubmit={submit} aria-label="Upload recording" className="upload-form">
-    <fieldset disabled={disabled || incident.recordings.length >= 3}>
+    <fieldset disabled={disabled}>
       <legend>Add a camera recording</legend>
       <label>Camera label<input required maxLength={100} value={label} onChange={(event) => setLabel(event.target.value)} placeholder="Camera A" /></label>
       <label>MP4 recording<input ref={fileInput} type="file" accept=".mp4,video/mp4" required onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
@@ -250,7 +262,6 @@ function UploadRecording({ incident, disabled, onBusy, onSaved }: SetupProps & {
       <button type="submit">{upload.isPending ? 'Uploading and validating…' : 'Upload recording'}</button>
     </fieldset>
     {upload.isPending && <p role="status">Uploading and validating the actual recording. Keep this page open until it finishes.</p>}
-    {incident.recordings.length >= 3 && <p className="muted">Three-camera limit reached for this incident.</p>}
     {(validationError || upload.isError) && <p role="alert" className="error">{validationError ?? messageFor(upload.error)}</p>}
   </form>;
 }

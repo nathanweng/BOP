@@ -178,12 +178,28 @@ def test_concurrent_controls_only_one_revision_wins(client, prepared):
     assert client.get(f"/api/incidents/{prepared['id']}/playback").json()["revision"] == prepared["playback"]["revision"] + 1
 
 
-def test_concurrent_uploads_never_exceed_three(client, prepared, media_fixture, settings):
+def test_single_recording_can_play(client, incident, media_fixture):
+    response = upload(client, incident["id"], media_fixture)
+    assert response.status_code == 201
+    detail = client.get(f"/api/incidents/{incident['id']}").json()
+    started = control(client, incident["id"], "play", detail["playback"]["revision"])
+    assert started.status_code == 200
+    assert started.json()["state"] == "playing"
+
+
+def test_more_than_three_recordings_can_be_uploaded(client, incident, media_fixture):
+    for index in range(4):
+        response = upload(client, incident["id"], media_fixture, f"Camera {index}")
+        assert response.status_code == 201, response.text
+    assert len(client.get(f"/api/incidents/{incident['id']}").json()["recordings"]) == 4
+
+
+def test_concurrent_uploads_all_persist(client, prepared, media_fixture, settings):
     with ThreadPoolExecutor(max_workers=2) as pool:
         results = list(pool.map(lambda n: upload(client, prepared["id"], media_fixture, f"Camera {n}"), range(2)))
-    assert sorted(response.status_code for response in results) == [201, 409]
-    assert len(client.get(f"/api/incidents/{prepared['id']}").json()["recordings"]) == 3
-    assert len(list(settings.media_root.glob("*.mp4"))) == 3
+    assert sorted(response.status_code for response in results) == [201, 201]
+    assert len(client.get(f"/api/incidents/{prepared['id']}").json()["recordings"]) == 4
+    assert len(list(settings.media_root.glob("*.mp4"))) == 4
     assert list(settings.media_root.glob("*.upload")) == []
 
 

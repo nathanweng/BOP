@@ -319,8 +319,6 @@ def create_app(
         with session.begin():
             incident = incident_row(session, incident_id)
             require_setup(current_run(session, incident))
-            if len(recordings_for(session, incident_id)) >= 3:
-                raise HTTPException(409, "An incident supports at most three recordings.")
         filename = (file.filename or "").replace("\\", "/").rsplit("/", 1)[-1]
         temporary, size, duration = stage_upload(file, settings)
         final: Path | None = None
@@ -329,8 +327,6 @@ def create_app(
                 incident = incident_row(session, incident_id, lock=True)
                 run = current_run(session, incident)
                 require_setup(run)
-                if len(recordings_for(session, incident_id)) >= 3:
-                    raise HTTPException(409, "An incident supports at most three recordings.")
                 recording = Recording(
                     id=str(uuid4()), incident_id=incident_id, original_filename=filename,
                     camera_label=label, storage_key=f"{uuid4().hex}.mp4",
@@ -409,8 +405,8 @@ def create_app(
                 session.flush()
                 incident.active_run_id = run.id
             elif payload.action == "play":
-                if len(recordings) < 2:
-                    raise HTTPException(409, "Upload at least two valid recordings before playing.")
+                if not recordings:
+                    raise HTTPException(409, "Upload at least one valid recording before playing.")
                 if current.state == "ended":
                     raise HTTPException(409, "Playback has ended. Restart to begin a new run.")
                 run.position_seconds = current.position_seconds

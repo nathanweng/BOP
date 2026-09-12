@@ -17,7 +17,7 @@ Foundation acceptance: two valid recordings can be uploaded, saved, aligned, rep
 
 ## 1. Create an incident and upload recordings
 - Create one incident workspace with a title and optional user-supplied context.
-- Upload two or three short body-camera videos of the same incident; support one declared format such as MP4 for the MVP.
+- Upload one or more short body-camera videos of the same incident; support one declared format such as MP4 for the MVP.
 - Give each recording a camera label, such as Camera A or Officer B. A camera label does not identify every person speaking in its audio.
 - Display upload/validation status, video duration, and actionable errors for unsupported or unreadable files.
 - Allow a manual start-time offset for each recording against the incident clock. Recordings may start at different times; automatic synchronization is deferred.
