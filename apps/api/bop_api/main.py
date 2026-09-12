@@ -11,7 +11,7 @@ from uuid import uuid4
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse, Response
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.formparsers import MultiPartException
@@ -19,7 +19,18 @@ from starlette.formparsers import MultiPartException
 from .config import Settings
 from .database import make_database
 from .media import media_path, stage_upload
-from .models import Incident, PlaybackRun, Recording, KnowledgeVersion, TranscriptSegment
+from .models import (
+    EventHistory,
+    Incident,
+    KnowledgeItem,
+    KnowledgeObservation,
+    KnowledgeSupport,
+    KnowledgeVersion,
+    PlaybackRun,
+    Recording,
+    SituationReportVersion,
+    TranscriptSegment,
+)
 from .event_service import EventService
 from .knowledge import KnowledgeService
 from .situation import SituationService
@@ -321,6 +332,38 @@ def create_app(
     @app.get("/api/incidents/{incident_id}", response_model=IncidentView)
     def get_incident(incident_id: str, session: Session = Depends(session_dependency)):
         return detail(session, incident_row(session, incident_id, lock=True))
+
+    def remove_stored_media(keys: list[str]) -> None:
+        for key in keys:
+            try:
+                media_path(settings, key).unlink(missing_ok=True)
+            except HTTPException:
+                logger.warning("Skipped media cleanup for unexpected storage key %s", key)
+            except OSError:
+                logger.exception("Failed to remove media file %s", key)
+
+    @app.delete("/api/incidents/{incident_id}", status_code=204)
+    def delete_incident(incident_id: str, session: Session = Depends(session_dependency)):
+        with session.begin():
+            incident = incident_row(session, incident_id, lock=True)
+            media_keys = [recording.storage_key for recording in recordings_for(session, incident_id)]
+            run_ids = select(PlaybackRun.id).where(PlaybackRun.incident_id == incident_id)
+            version_ids = select(KnowledgeVersion.id).where(KnowledgeVersion.run_id.in_(run_ids))
+            item_ids = select(KnowledgeItem.id).where(KnowledgeItem.version_id.in_(version_ids))
+            session.execute(delete(KnowledgeSupport).where(KnowledgeSupport.item_id.in_(item_ids)))
+            session.execute(delete(KnowledgeItem).where(KnowledgeItem.version_id.in_(version_ids)))
+            session.execute(delete(KnowledgeObservation).where(KnowledgeObservation.version_id.in_(version_ids)))
+            session.execute(delete(KnowledgeVersion).where(KnowledgeVersion.run_id.in_(run_ids)))
+            session.execute(delete(SituationReportVersion).where(SituationReportVersion.run_id.in_(run_ids)))
+            session.execute(delete(EventHistory).where(EventHistory.run_id.in_(run_ids)))
+            session.execute(delete(TranscriptSegment).where(TranscriptSegment.run_id.in_(run_ids)))
+            incident.active_run_id = None
+            session.flush()
+            session.execute(delete(PlaybackRun).where(PlaybackRun.incident_id == incident_id))
+            session.execute(delete(Recording).where(Recording.incident_id == incident_id))
+            session.delete(incident)
+        remove_stored_media(media_keys)
+        return Response(status_code=204)
 
     @app.post("/api/incidents/{incident_id}/recordings", response_model=RecordingView, status_code=201)
     def upload_recording(

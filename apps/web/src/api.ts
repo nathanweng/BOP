@@ -30,10 +30,15 @@ async function request<T>(path: string, options?: RequestInit, timeoutMs = 15000
     if (error instanceof Error && error.name === 'TimeoutError') throw new ApiError('The API request timed out. Check your connection and try again.', 0);
     throw new ApiError('Cannot reach the API. Check your connection and that the API is running.', 0);
   }
-  const body: unknown = await response.json().catch(() => null);
+  const raw = await response.text().catch(() => '');
+  let body: unknown = null;
+  if (raw) {
+    try { body = JSON.parse(raw); } catch { body = null; }
+  }
   if (!response.ok) {
     throw new ApiError(errorText(body) ?? `The request failed (HTTP ${response.status}). Please try again.`, response.status);
   }
+  if (response.status === 204 || raw === '') return undefined as T;
   if (body === null) throw new ApiError('The API returned an unreadable response. Please try again.', response.status);
   return body as T;
 }
@@ -60,6 +65,7 @@ export const api = {
   createIncident: (title: string, context: string) => request<Incident>('/incidents', {
     method: 'POST', ...jsonBody({ title, context }),
   }),
+  deleteIncident: (id: string) => request<void>(`/incidents/${id}`, { method: 'DELETE' }),
   uploadRecording: (incidentId: string, form: FormData) => request<Recording>(`/incidents/${incidentId}/recordings`, {
     method: 'POST', body: form,
   }, 0),
