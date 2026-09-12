@@ -20,6 +20,14 @@ export interface Recording {
 
 export type TranscriptStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'empty';
 
+export interface TranscriptTurn {
+  speaker: number;
+  label: string;
+  text: string;
+  local_start_seconds: number;
+  local_end_seconds: number;
+}
+
 export interface TranscriptSegment {
   id: string;
   recording_id: string;
@@ -31,6 +39,7 @@ export interface TranscriptSegment {
   status: TranscriptStatus;
   text: string | null;
   error: string | null;
+  turns: TranscriptTurn[];
 }
 
 export interface RecordingTranscript {

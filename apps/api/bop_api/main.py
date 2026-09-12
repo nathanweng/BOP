@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+import json
 import logging
 import os
 from pathlib import Path
@@ -29,6 +30,7 @@ from .schemas import (
     RecordingUpdate,
     RecordingView,
     TranscriptSegmentView,
+    TranscriptTurnView,
     TranscriptsView,
 )
 from .transcription import (
@@ -36,9 +38,39 @@ from .transcription import (
     NullTranscriber,
     Transcriber,
     TranscriptionService,
+    group_speaker_turns,
 )
 
 logger = logging.getLogger(__name__)
+
+
+def transcript_turns_from_words(words_json: str | None) -> list[TranscriptTurnView]:
+    """Rebuild anonymous speaker turns from stored word timestamps."""
+    if not words_json:
+        return []
+    try:
+        words = json.loads(words_json)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(words, list):
+        return []
+    if not any(isinstance(word, dict) and "speaker" in word for word in words):
+        return []
+    turns = group_speaker_turns(words)
+    # Skip a lone unlabeled stream — UI shows plain text instead.
+    if len(turns) <= 1 and all(turn.speaker == 0 for turn in turns):
+        return []
+    return [
+        TranscriptTurnView(
+            speaker=turn.speaker + 1,
+            label=f"Speaker {turn.speaker + 1}",
+            text=turn.text,
+            local_start_seconds=turn.start,
+            local_end_seconds=turn.end,
+        )
+        for turn in turns
+        if turn.text
+    ]
 
 
 class UploadBodyLimit:
@@ -417,6 +449,7 @@ def create_app(
                     status=segment.status,
                     text=segment.text,
                     error=segment.error,
+                    turns=transcript_turns_from_words(segment.words_json),
                 )
             )
         latest = transcription.latest_analyzed_by_recording(

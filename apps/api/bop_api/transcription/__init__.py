@@ -11,19 +11,25 @@ from .service import TranscriptionService
 from .transcriber import (
     GrokTranscriber,
     NullTranscriber,
+    SpeakerTurn,
     Transcriber,
     TranscriberError,
     TranscriberResult,
+    format_diarized_text,
+    group_speaker_turns,
 )
 
 __all__ = [
     "GrokTranscriber",
     "NullTranscriber",
+    "SpeakerTurn",
     "Transcriber",
     "TranscriberError",
     "TranscriberResult",
     "TranscriptionService",
     "Window",
     "eligible_windows",
+    "format_diarized_text",
+    "group_speaker_turns",
     "incident_window",
 ]

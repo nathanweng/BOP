@@ -62,6 +62,20 @@ class RecordingView(BaseModel):
     latest_analyzed_time_seconds: float | None = None
 
 
+class TranscriptTurnView(BaseModel):
+    """Anonymous speaker turn within one released segment.
+
+    Speaker numbers are 1-based display labels for this segment only. They do
+    not identify officers or witnesses and are not matched across cameras.
+    """
+
+    speaker: int
+    label: str
+    text: str
+    local_start_seconds: float
+    local_end_seconds: float
+
+
 class TranscriptSegmentView(BaseModel):
     id: str
     recording_id: str
@@ -73,6 +87,7 @@ class TranscriptSegmentView(BaseModel):
     status: Literal["queued", "processing", "completed", "failed", "empty"]
     text: str | None = None
     error: str | None = None
+    turns: list[TranscriptTurnView] = []
 
 
 class RecordingTranscript(BaseModel):

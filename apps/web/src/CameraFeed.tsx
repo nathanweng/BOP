@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatTime, recordingPosition } from './clock';
-import type { RecordingTranscript, Recording, TranscriptSegment } from './types';
+import type { RecordingTranscript, Recording, TranscriptSegment, TranscriptTurn } from './types';
 
 interface Props {
   recording: Recording;
@@ -150,60 +150,143 @@ interface TranscriptPanelProps {
   transcriptConfigured: boolean;
 }
 
+function latestCompletedSegment(segments: TranscriptSegment[]): TranscriptSegment | null {
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment.status === 'completed' && segment.text?.trim()) return segment;
+  }
+  return null;
+}
+
+function SpeakerTurnLines({ turns, className }: { turns: TranscriptTurn[]; className?: string }) {
+  return (
+    <div className={className ?? 'speaker-turns'}>
+      {turns.map((turn, index) => (
+        <p key={`${turn.label}-${index}-${turn.local_start_seconds}`} className="speaker-turn-line">
+          <span className="speaker-label">{turn.label}</span> {turn.text}
+        </p>
+      ))}
+    </div>
+  );
+}
+
 function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptConfigured }: TranscriptPanelProps) {
+  const [expanded, setExpanded] = useState(false);
   const segments = transcript?.segments ?? [];
   const inFlight = segments.filter((segment) => segment.status === 'queued' || segment.status === 'processing').length;
   const completed = segments.filter((segment) => segment.status === 'completed');
   const failed = segments.filter((segment) => segment.status === 'failed');
   const empty = segments.filter((segment) => segment.status === 'empty').length;
+  const liveSegment = latestCompletedSegment(segments);
+  const liveTurns = liveSegment?.turns ?? [];
+  const hasLog = segments.some((segment) =>
+    segment.status === 'completed' || segment.status === 'failed' || segment.status === 'empty' ||
+    segment.status === 'queued' || segment.status === 'processing',
+  );
+
   return (
-    <section className="feed-transcript" aria-label={`Live transcript for ${recordingLabel}`}>
+    <section className={`feed-transcript${expanded ? ' expanded' : ''}`} aria-label={`Live transcript for ${recordingLabel}`}>
       <header className="transcript-heading">
         <span>Live transcript</span>
-        <TranscriptStatusBadge inFlight={inFlight} completedCount={completed.length} emptyCount={empty} failedCount={failed.length} configured={transcriptConfigured} />
+        <div className="transcript-heading-actions">
+          <TranscriptStatusBadge inFlight={inFlight} completedCount={completed.length} emptyCount={empty} failedCount={failed.length} configured={transcriptConfigured} />
+          {hasLog && (
+            <button
+              type="button"
+              className="transcript-expand"
+              aria-expanded={expanded}
+              aria-controls={`transcript-log-${recordingId}`}
+              aria-label={expanded ? `Collapse transcript log for ${recordingLabel}` : `Expand transcript log for ${recordingLabel}`}
+              onClick={() => setExpanded((value) => !value)}
+            >
+              <ExpandIcon expanded={expanded} />
+            </button>
+          )}
+        </div>
       </header>
-      <ol className="transcript-cues" data-testid={`feed-transcript-${recordingId}`}>
-        {completed.length === 0 && failed.length === 0 && empty === 0 && (
-          <li className="transcript-placeholder">
-            {transcriptConfigured
-              ? 'Speech transcribed here as the shared clock releases each segment.'
-              : 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'}
-          </li>
-        )}
-        {segments.map((segment) => <TranscriptCue key={segment.id} segment={segment} />)}
-      </ol>
+
+      {!expanded && (
+        <div className="transcript-live" data-testid={`feed-transcript-${recordingId}`}>
+          {liveSegment && liveTurns.length > 0 ? (
+            <SpeakerTurnLines turns={liveTurns} className="speaker-turns transcript-live-turns" />
+          ) : liveSegment?.text ? (
+            <p className="transcript-plain transcript-live-text">{liveSegment.text}</p>
+          ) : (
+            <p className="transcript-placeholder">
+              {!transcriptConfigured
+                ? 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'
+                : inFlight > 0
+                  ? 'Transcribing the latest released speech…'
+                  : 'Speech will appear here as the shared clock releases each segment.'}
+            </p>
+          )}
+        </div>
+      )}
+
+      {expanded && (
+        <div id={`transcript-log-${recordingId}`} className="transcript-log" data-testid={`feed-transcript-log-${recordingId}`}>
+          {segments.length === 0 && (
+            <p className="transcript-placeholder">
+              {transcriptConfigured
+                ? 'No transcript segments yet.'
+                : 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'}
+            </p>
+          )}
+          <ol className="transcript-log-list">
+            {segments.map((segment) => <TranscriptLogEntry key={segment.id} segment={segment} />)}
+          </ol>
+        </div>
+      )}
     </section>
   );
 }
 
-function TranscriptCue({ segment }: { segment: TranscriptSegment }) {
+function ExpandIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
+      {expanded ? (
+        <path d="M3.5 8.5 7 5l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      ) : (
+        <path d="M3.5 5.5 7 9l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      )}
+    </svg>
+  );
+}
+
+function TranscriptLogEntry({ segment }: { segment: TranscriptSegment }) {
+  const range = `${formatTime(segment.incident_start_seconds)} – ${formatTime(segment.incident_end_seconds)}`;
   if (segment.status === 'completed') {
+    const turns = segment.turns ?? [];
     return (
-      <li className="transcript-cue completed">
-        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
-        <p>{segment.text}</p>
+      <li className="transcript-log-entry">
+        <time className="cue-time">{range}</time>
+        {turns.length > 0 ? (
+          <SpeakerTurnLines turns={turns} />
+        ) : (
+          <p className="transcript-plain">{segment.text}</p>
+        )}
       </li>
     );
   }
   if (segment.status === 'empty') {
     return (
-      <li className="transcript-cue muted">
-        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+      <li className="transcript-log-entry muted">
+        <time className="cue-time">{range}</time>
         <p className="muted">No speech detected.</p>
       </li>
     );
   }
   if (segment.status === 'failed') {
     return (
-      <li className="transcript-cue failed">
-        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+      <li className="transcript-log-entry failed">
+        <time className="cue-time">{range}</time>
         <p role="alert">Transcription failed. {segment.error ?? ''}</p>
       </li>
     );
   }
   return (
-    <li className="transcript-cue pending">
-      <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+    <li className="transcript-log-entry pending">
+      <time className="cue-time">{range}</time>
       <p className="muted">{segment.status === 'processing' ? 'Transcribing…' : 'Waiting for transcription…'}</p>
     </li>
   );

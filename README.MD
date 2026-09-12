@@ -200,9 +200,9 @@ Every feature change must update this README's status section and include the re
 
 Live transcription is enabled per camera feed, driven by the same backend cutoff that owns replay.
 
-- Provider: xAI Grok batch Speech-to-Text (`POST https://api.x.ai/v1/stt`), kept behind a small `Transcriber` interface in `apps/api/bop_api/transcription/`.
-- Pipeline: playback advances → backend releases eligible segments (default 10 s, `SEGMENT_SECONDS`) → FFmpeg extracts only that window's audio to a temporary mono 16 kHz WAV → Grok returns text and word timestamps → the frontend polls `GET /api/incidents/{id}/transcripts` at ~1 Hz and appends completed cues under each camera.
-- Domain rules honored: no model ever sees media beyond the cutoff, transcripts are keyed by `run_id` so restart isolates them, failed segments never advance the analyzed cutoff, and silent recordings are marked `empty` without a provider call.
+- Provider: xAI Grok batch Speech-to-Text (`POST https://api.x.ai/v1/stt`) with speaker diarization enabled, kept behind a small `Transcriber` interface in `apps/api/bop_api/transcription/`.
+- Pipeline: playback advances → backend releases eligible segments (default 10 s, `SEGMENT_SECONDS`) → FFmpeg extracts only that window's audio to a temporary mono 16 kHz WAV → Grok returns text, word timestamps, and anonymous speaker ids → the frontend polls `GET /api/incidents/{id}/transcripts` at ~1 Hz and appends completed cues (with Speaker 1 / Speaker 2 turns when multiple voices are detected) under each camera.
+- Domain rules honored: no model ever sees media beyond the cutoff, transcripts are keyed by `run_id` so restart isolates them, failed segments never advance the analyzed cutoff, silent recordings are marked `empty` without a provider call, and speaker labels stay anonymous (never auto-mapped to officer/witness or matched across cameras).
 
 Configure the API key locally and do not commit it:
 

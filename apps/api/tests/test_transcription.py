@@ -18,9 +18,40 @@ from bop_api.transcription import (
     NullTranscriber,
     TranscriberError,
     TranscriberResult,
+    format_diarized_text,
+    group_speaker_turns,
 )
 from bop_api.transcription.eligibility import eligible_windows
 from conftest import upload
+
+
+def test_group_speaker_turns_splits_consecutive_speakers():
+    turns = group_speaker_turns([
+        {"text": "She", "start": 0.0, "end": 0.2, "speaker": 0},
+        {"text": "hit", "start": 0.2, "end": 0.4, "speaker": 0},
+        {"text": "us.", "start": 0.4, "end": 0.6, "speaker": 0},
+        {"text": "Is", "start": 0.7, "end": 0.8, "speaker": 1},
+        {"text": "she", "start": 0.8, "end": 1.0, "speaker": 1},
+        {"text": "okay?", "start": 1.0, "end": 1.2, "speaker": 1},
+        {"text": "I'm", "start": 1.3, "end": 1.5, "speaker": 0},
+        {"text": "trying.", "start": 1.5, "end": 1.8, "speaker": 0},
+    ])
+    assert [(t.speaker, t.text) for t in turns] == [
+        (0, "She hit us."),
+        (1, "Is she okay?"),
+        (0, "I'm trying."),
+    ]
+    assert format_diarized_text(turns, "plain") == (
+        "Speaker 1: She hit us.\nSpeaker 2: Is she okay?\nSpeaker 1: I'm trying."
+    )
+
+
+def test_format_diarized_text_keeps_single_speaker_plain():
+    turns = group_speaker_turns([
+        {"text": "Hello", "start": 0.0, "end": 0.3, "speaker": 0},
+        {"text": "there.", "start": 0.3, "end": 0.6, "speaker": 0},
+    ])
+    assert format_diarized_text(turns, "Hello there.") == "Hello there."
 
 
 def _windows(cutoff, offset=0.0, duration=25.0, segment=10.0):
@@ -71,6 +102,22 @@ class FakeTranscriber:
             assert audio_path.exists(), "Extracted audio must exist for the provider call"
             assert audio_path.stat().st_size > 44, "Provider received an empty audio file"
         return self.response
+
+
+class DiarizedFakeTranscriber:
+    def transcribe(self, audio_path: Path) -> TranscriberResult:
+        words = [
+            {"text": "She", "start": 0.0, "end": 0.2, "speaker": 0},
+            {"text": "hit", "start": 0.2, "end": 0.4, "speaker": 0},
+            {"text": "us.", "start": 0.4, "end": 0.6, "speaker": 0},
+            {"text": "Okay?", "start": 0.7, "end": 1.0, "speaker": 1},
+        ]
+        turns = group_speaker_turns(words)
+        return TranscriberResult(
+            text=format_diarized_text(turns, "She hit us. Okay?"),
+            words=words,
+            turns=turns,
+        )
 
 
 class RaisingTranscriber:
@@ -142,6 +189,48 @@ def test_playback_releases_and_transcribes_only_reached_windows(transcribing_cli
         assert 2.5 < segment["local_end_seconds"] <= 3.2
         assert feed["latest_analyzed_time_seconds"] == segment["incident_end_seconds"]
     assert len(transcriber.calls) == 2
+
+
+def test_diarized_transcript_exposes_anonymous_speaker_turns(settings, clock, media_fixture, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", settings.database_url)
+    from alembic import command
+    from alembic.config import Config
+
+    config = Config(str(Path(__file__).parents[1] / "alembic.ini"))
+    command.upgrade(config, "head")
+    app = create_app(settings, clock, transcriber=DiarizedFakeTranscriber())
+    with TestClient(app) as client:
+        prepared = _prepared(client, media_fixture, offsets=(0, 0))
+        play = client.post(
+            f"/api/incidents/{prepared['id']}/playback",
+            json={"action": "play", "expected_revision": prepared["playback"]["revision"]},
+        )
+        assert play.status_code == 200
+        clock.advance(4)
+        client.get(f"/api/incidents/{prepared['id']}/playback")
+        app.state.transcription.process_pending()
+        transcripts = client.get(f"/api/incidents/{prepared['id']}/transcripts").json()
+        for feed in transcripts["recordings"]:
+            assert len(feed["segments"]) == 1
+            segment = feed["segments"][0]
+            assert segment["status"] == "completed"
+            assert segment["text"] == "Speaker 1: She hit us.\nSpeaker 2: Okay?"
+            assert segment["turns"] == [
+                {
+                    "speaker": 1,
+                    "label": "Speaker 1",
+                    "text": "She hit us.",
+                    "local_start_seconds": 0.0,
+                    "local_end_seconds": 0.6,
+                },
+                {
+                    "speaker": 2,
+                    "label": "Speaker 2",
+                    "text": "Okay?",
+                    "local_start_seconds": 0.7,
+                    "local_end_seconds": 1.0,
+                },
+            ]
 
 
 def test_restart_isolates_transcripts_between_runs(transcribing_client, media_fixture, clock):
