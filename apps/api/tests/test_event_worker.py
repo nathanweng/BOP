@@ -230,3 +230,25 @@ def test_background_worker_processes_without_http_request(app, prepared, clock):
         pytest.fail("The worker did not persist its automatic result")
     finally:
         worker.stop()
+
+
+def test_successful_batch_continues_without_idle_poll_delay(app, prepared):
+    service, add, incident_id, run_id = prepared
+    add('first')
+    invoked = threading.Event()
+    calls = []
+    def generate(_settings, segments, existing):
+        calls.append([s.id for s in segments])
+        if len(calls) == 1:
+            add('arrived-during-analysis', 20)
+        else:
+            invoked.set()
+        return existing
+    worker = EventService(replace(service.settings, event_worker_interval_seconds=30),
+                          app.state.sessions, service.clock, generate)
+    worker.start()
+    try:
+        assert invoked.wait(3), 'Successful analysis must not wait the idle 30-second interval'
+        assert calls == [['first'], ['arrived-during-analysis']]
+    finally:
+        worker.stop()

@@ -46,7 +46,7 @@ export function EventHistory({ incidentId, runId, recordings, onSeek, seekDisabl
   const status = generate.isPending || data?.state === 'processing' ? 'Analyzing transcripts'
     : data?.state === 'queued' ? 'Analysis queued' : data?.state === 'retrying' ? 'Retrying analysis'
     : data?.state === 'failed' ? 'Analysis needs attention'
-    : data?.processed_segments ? 'Up to date' : 'Awaiting transcripts';
+    : data?.processed_segments ? 'Available transcripts analyzed' : 'Awaiting transcripts';
   const factRow = (event: HistoryEvent) => {
     const factTime = formatTime(event.timestamp_seconds);
     const updateTime = event.status_timestamp_seconds;
@@ -69,12 +69,13 @@ export function EventHistory({ incidentId, runId, recordings, onSeek, seekDisabl
   };
   return <section className="panel event-history-panel" id="event-history" aria-labelledby="event-history-heading">
     <div className="section-heading facts-heading"><div><h2 id="event-history-heading"><span className="section-number">03</span> Events & facts</h2>
-      <p>A chronological log of the incident. Yellow marks human review or changed details; red marks objective contradictions.</p></div>
+      <p>Times refer to the original recording, at every replay speed. Yellow marks human review or changed details; red marks objective contradictions.</p></div>
       <span className="analysis-status" role="status"><span className="status-dot" />{status}</span></div>
     <div className="facts-toolbar"><div className="fact-filters" role="group" aria-label="Filter events">
       {(['all', 'current', 'challenged'] as const).map((value) => <button key={value} aria-pressed={filter === value} onClick={() => setFilter(value)}>
         {value === 'all' ? 'All events' : value === 'current' ? 'Current' : 'Needs review'} <span>{value === 'all' ? events.length : value === 'current' ? current.length : challenged.length}</span>
       </button>)}</div><span className="facts-order">INCIDENT TIME ↑</span></div>
+    {!!data?.pending_segments && <p className="muted" role="status">{data.pending_segments} transcript segments awaiting event analysis.</p>}
     {data?.configured && data.state == null && <p role="status">Event analysis is unavailable. Restart the API to enable it.</p>}
     {data?.error && <div role="alert"><p>{data.error}</p><button disabled={generate.isPending} onClick={() => generate.mutate()}>Retry analysis</button></div>}
     {data && !data.configured && <p className="muted">Event analysis is not configured.</p>}

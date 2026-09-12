@@ -402,3 +402,70 @@ def test_health_reports_transcription_configured(settings, clock, monkeypatch):
 def test_null_transcriber_surfaces_configuration_error():
     with pytest.raises(TranscriberError):
         NullTranscriber().transcribe(Path("/tmp/does-not-matter"))
+
+
+@pytest.mark.parametrize('speed', [1, 2, 4])
+def test_accelerated_release_keeps_original_source_times(transcribing_client, media_fixture, clock, speed):
+    client, app, _ = transcribing_client
+    prepared = _prepared(client, media_fixture, offsets=(2,))
+    iid = prepared['id']
+    faster = client.post(f'/api/incidents/{iid}/playback', json={
+        'action': 'set_speed', 'speed': speed, 'expected_revision': prepared['playback']['revision'],
+    }).json()
+    client.post(f'/api/incidents/{iid}/playback', json={
+        'action': 'play', 'expected_revision': faster['revision'],
+    })
+    clock.advance(4 / speed)
+    client.get(f'/api/incidents/{iid}/playback')
+    assert app.state.transcription.process_pending() == 0  # Window still unreleased.
+    clock.advance(2 / speed)
+    client.get(f'/api/incidents/{iid}/playback')
+    assert app.state.transcription.process_pending() == 1
+    feed = client.get(f'/api/incidents/{iid}/transcripts').json()['recordings'][0]
+    assert feed['segments'][0]['incident_start_seconds'] == 2
+    assert feed['segments'][0]['local_start_seconds'] == 0
+    assert feed['segments'][0]['incident_end_seconds'] == pytest.approx(5, abs=.2)
+
+
+def test_concurrent_processing_refills_slots_and_does_not_skip_analysis_gaps(app, incident, clock, monkeypatch):
+    from bop_api.models import Recording, TranscriptSegment
+    service = app.state.transcription
+    service._settings = replace(service._settings, transcription_concurrency=2)
+    rid = incident['playback']['run_id']
+    with app.state.sessions() as session:
+        session.add(Recording(id='parallel-cam', incident_id=incident['id'], original_filename='test.mp4',
+            camera_label='A', storage_key='test.mp4', duration_seconds=40, start_offset_seconds=2,
+            size_bytes=100, created_at=clock()))
+        session.commit()
+        for i in range(4):
+            session.add(TranscriptSegment(id=f's{i}', run_id=rid, recording_id='parallel-cam',
+                local_start_seconds=i * 10, local_end_seconds=(i + 1) * 10,
+                incident_start_seconds=i * 10 + 2, incident_end_seconds=(i + 1) * 10 + 2,
+                status='queued', created_at=clock()))
+        session.commit()
+    release_first, refilled = threading.Event(), threading.Event()
+    calls = []
+    def process(**kwargs):
+        sid = kwargs['segment_id']
+        calls.append(sid)
+        if sid == 's0':
+            assert release_first.wait(5)
+        with app.state.sessions() as session:
+            session.get(TranscriptSegment, sid).status = 'completed'
+            session.commit()
+        if sid == 's2':
+            refilled.set()
+    monkeypatch.setattr(service, '_process_one', process)
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        result = executor.submit(service.process_pending, max_segments=3)
+        try:
+            assert refilled.wait(5), 'A free slot must refill while the first clip is still processing'
+            assert service.latest_analyzed_by_recording(run_id=rid, recording_ids=['parallel-cam']) == {}
+        finally:
+            release_first.set()
+        assert result.result(timeout=5) == 3
+    assert set(calls) == {'s0', 's1', 's2'}
+    assert service.latest_analyzed_by_recording(run_id=rid, recording_ids=['parallel-cam']) == {'parallel-cam': 32}
+    with app.state.sessions() as session:
+        assert session.get(TranscriptSegment, 's3').status == 'queued'

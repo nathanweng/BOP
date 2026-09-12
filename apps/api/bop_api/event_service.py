@@ -37,10 +37,13 @@ class EventService:
     def _loop(self):
         while not self._stop.is_set():
             try:
-                self.process_pending()
+                progressed = self.process_pending()
             except Exception:
+                progressed = False
                 logger.exception("Event worker iteration failed; it will retry on the next interval.")
-            if self._stop.wait(self.settings.event_worker_interval_seconds):
+            # Drain another batch immediately after success, while retaining
+            # the normal poll/backoff when idle, leased elsewhere or failed.
+            if not progressed and self._stop.wait(self.settings.event_worker_interval_seconds):
                 return
 
     def _eligible(self, session, incident, run):
@@ -79,10 +82,12 @@ class EventService:
             return
         with self.sessions() as session:
             ids = list(session.scalars(select(Incident.id)))
+        progressed = False
         for incident_id in ids:
             if self._stop.is_set():
-                return
-            self.process_incident(incident_id)
+                break
+            progressed = self.process_incident(incident_id) or progressed
+        return progressed
 
     def process_incident(self, incident_id):
         if not self.settings.openrouter_api_key:
