@@ -74,11 +74,16 @@ Acceptance: new information from either camera changes the shared sitrep without
 Acceptance: a reviewer can trace a claim to its source, correct a mistake, and see the correction reflected in the next sitrep.
 
 ## Minimum interface
+Use an operations-center layout inspired by Axon Fusus: make the incident itself visible first, keep live source context continuously available, and place analysis and reconstruction in a clearly ordered investigative flow.
+
 One incident dashboard containing:
-1. Camera panels with source labels and analysis status.
-2. Shared playback controls and incident clock.
-3. Current sitrep with latest changes and unresolved information.
-4. Expandable event history and an evidence panel for selected claims.
+1. **Main stage — live incident map and body-camera view.** The default stage is a map-centered operational view with the active body-camera feed available alongside or over the map. Show camera/source labels, camera status, current playback time, latest analyzed time, and the selected feed's approximate supported location when known. The map is an incident-context view, not a claim of precise GPS or live production integration; unknown locations remain unknown.
+2. **Next — statement-based reconstruction scene.** Directly beneath or immediately after the main stage, show the evolving reconstruction for the current simulation cutoff. It follows the live/map view so responders can first inspect the source context, then review a synthesized interpretation of people, locations, movement, and event order.
+3. Shared playback controls and incident clock, persistent while reviewing the main stage or reconstruction.
+4. Current sitrep with latest changes and unresolved information.
+5. Expandable event history and an evidence panel for selected claims.
+
+Selecting a map marker, body-camera feed, reconstruction object, or sitrep item should keep the dashboard in the same incident context and reveal the linked source clips and observations. Do not let a reconstruction selection advance the incident clock or reveal future footage.
 
 Upload and alignment can be a simple setup screen. Accounts, multiuser collaboration, and complex navigation are not required.
 
@@ -93,7 +98,7 @@ Upload and alignment can be a simple setup screen. Accounts, multiuser collabora
 Keep observations as the underlying record so a generated summary cannot erase details or become its own unsupported evidence.
 
 ## Processing flow
-Uploaded files → aligned replay → released segments → per-camera transcription and statement analysis → structured observations → cross-camera grouping and status updates → cited sitrep → dashboard.
+Uploaded files → aligned replay → map/live body-camera main stage → released segments → per-camera transcription and statement analysis → structured observations → cross-camera grouping and status updates → cited sitrep → statement-based reconstruction scene.
 
 ## Definition of done
 Using two short recordings of a staged incident, demonstrate:
@@ -108,15 +113,15 @@ Using two short recordings of a staged incident, demonstrate:
 Measure actual processing delay on the demo files. A 10-second release interval does not imply a 10-second end-to-end delay. If analysis falls behind, display the backlog rather than implying the sitrep is current.
 
 ## Build order
-1. Upload and manually align two playable recordings.
+1. Upload and manually align two playable recordings, then display them in the map/live body-camera main stage.
 2. Extract observations from one released segment with correct source timestamps.
 3. Process both recordings incrementally and maintain an observation store.
 4. Produce a source-linked sitrep with changes and conflicts.
 5. Connect dashboard evidence playback and reviewer corrections.
-6. Verify the staged end-to-end scenario and measure latency.
+6. Add the statement-based reconstruction scene immediately after the main stage, then verify the staged end-to-end scenario and measure latency.
 
-## Stretch goal: evolving scene reconstruction
-Priority: begin only after the core upload, replay, statement extraction, multi-source sitrep, and source-review workflow functions end to end. This feature is not an MVP completion requirement.
+## Next-stage capability: evolving scene reconstruction
+Priority: implement this immediately after the map/live body-camera main stage and core upload, replay, statement extraction, multi-source sitrep, and source-review workflow function end to end. It is the next view in the incident dashboard, but does not block the reliability of the source-linked MVP workflow.
 
 - Add a lightweight 2D schematic reconstructed from witness and responder statements: labeled people or objects, approximate places, and supported movement arrows. Use simple shapes or icons rather than generated photorealistic scenes or full 3D geometry.
 - Label the view “Statement-based reconstruction.” Only render relationships supported by available statements. Leave unspecified positions unknown; a schematic layout is not measured geometry.
@@ -127,7 +132,7 @@ Priority: begin only after the core upload, replay, statement extraction, multi-
 - Clicking an object, movement, or event reveals its supporting statements and source clips. Reviewer corrections update the schematic as well as the sitrep.
 - Derive reconstruction state from existing structured observations, with optional relative spatial relationships and event links added later. Do not make the main pipeline depend on reconstruction fields or visual models.
 
-Stretch acceptance: a witness initially reports that a person was near an entrance; a later clarification identifies a different entrance. The schematic updates the location and support indicators, preserves the original claim, and shows the earlier interpretation when replay is returned to the earlier cutoff.
+Next-stage acceptance: a witness initially reports that a person was near an entrance; a later clarification identifies a different entrance. The schematic updates the location and support indicators, preserves the original claim, and shows the earlier interpretation when replay is returned to the earlier cutoff.
 
 ## Deferred functionality
 Live camera integrations, automatic clock synchronization, full 3D reconstruction, continuous automated visual analysis, facial recognition, automatic cross-camera person identification, tactical recommendations, automated report filing, calibrated probability scores, and production agency integrations.
