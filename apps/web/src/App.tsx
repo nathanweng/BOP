@@ -6,7 +6,7 @@ import { CameraFeed } from './CameraFeed';
 import { SituationReport } from './SituationReport';
 import { EventHistory } from './EventHistory';
 import { BoardStatus } from './BoardStatus';
-import { formatTime } from './clock';
+import { demoSpeed, formatTime } from './clock';
 import { useSelection } from './selection';
 import { processedThrough } from './timeline';
 import type { Incident, Recording, RecordingTranscript } from './types';
@@ -240,8 +240,9 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
   }, []);
 
   const duration = replay.playback.duration_seconds;
+  const speed = demoSpeed(replay.playback.speed);
   const ending = replay.position >= duration && duration > 0;
-  const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? 'Playing' : 'Paused';
+  const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? (speed === 1 ? 'Playing' : `Playing · ${speed}×`) : 'Paused';
   const displayPosition = scrubbing ? scrubValue : replay.position;
   const currentRunTranscripts = transcripts.data?.run_id === replay.playback.run_id
     ? transcripts.data.recordings
@@ -303,6 +304,7 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
             recording={recording}
             incidentTime={displayPosition}
             playing={replay.playing && !scrubbing}
+            speed={speed}
             selected={selectedId === recording.id}
             audioEnabled={audioEnabled}
             runId={replay.playback.run_id}
@@ -375,6 +377,18 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
       <div className="button-row">
         <button type="button" className="primary play-button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
         <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy || scrubbing}>Pause</button>
+        <div className="speed-choice" role="group" aria-label="Replay speed">
+          {([1, 2, 4] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={speed === option}
+              data-testid={`replay-speed-${option}`}
+              onClick={() => void replay.control({ action: 'set_speed', speed: option })}
+              disabled={!replay.connected || replay.pending || setupBusy || scrubbing || speed === option}
+            >{option}×</button>
+          ))}
+        </div>
         <button type="button" onClick={() => void replay.control({ action: 'seek', positionSeconds: 0 })} disabled={resetDisabled} data-testid="reset-to-start">Reset to 0</button>
         <button type="button" className="danger" onClick={() => setConfirmClear(true)} disabled={clearDisabled} data-testid="clear-history">Clear all history</button>
         <label className="audio-choice"><input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} disabled={!selected} />Enable selected camera audio</label>

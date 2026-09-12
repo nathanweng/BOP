@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 test('facts filter, show corrections, and seek existing cameras on the shared timeline', async ({ page, mp4Path }) => {
   let corrected = false;
   const commands: number[] = [];
-  const playback = { run_id: 'history-run', state: 'paused', position_seconds: 0, duration_seconds: 14,
+  const playback = { run_id: 'history-run', state: 'paused', position_seconds: 0, duration_seconds: 14, speed: 1,
     revision: 0, server_time: new Date().toISOString() };
   const recording = { id: 'camera', camera_label: 'Camera A', original_filename: 'source.mp4', duration_seconds: 12,
     start_offset_seconds: 2, size_bytes: 100, media_url: '/fixture-source.mp4', validation_status: 'ready',

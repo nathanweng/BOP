@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 test('scene summary cites events, reveals filtered rows, and handles updates and rewind', async ({ page }) => {
   let commands = 0;
   let updating = false;
-  const playback = { run_id: 'sitrep-run', state: 'paused', position_seconds: 30, duration_seconds: 60,
+  const playback = { run_id: 'sitrep-run', state: 'paused', position_seconds: 30, duration_seconds: 60, speed: 1,
     revision: 0, server_time: new Date().toISOString() };
   const recording = { id: 'cam', camera_label: 'Camera A', original_filename: 'source.mp4', duration_seconds: 60,
     start_offset_seconds: 0, size_bytes: 100, media_url: '/fixture-source.mp4', validation_status: 'ready',
@@ -62,7 +62,7 @@ test('scene summary cites events, reveals filtered rows, and handles updates and
 });
 
 test('failed first summary does not claim a previous summary or active generation', async ({ page }) => {
-  const playback = { run_id: 'failed-run', state: 'paused', position_seconds: 30, duration_seconds: 60,
+  const playback = { run_id: 'failed-run', state: 'paused', position_seconds: 30, duration_seconds: 60, speed: 1,
     revision: 0, server_time: new Date().toISOString() };
   const incident = { id: 'failed-ui', title: 'Failed summary', context: '',
     created_at: new Date().toISOString(), recordings: [], playback };

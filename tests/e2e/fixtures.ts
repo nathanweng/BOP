@@ -92,7 +92,7 @@ export async function readPlaybackSample(page: Page, recordingIds: string[]) {
       videos: ids.map((id) => {
         const video = document.querySelector<HTMLVideoElement>(`[data-testid="camera-feed-${id}"] video`);
         if (!video) throw new Error(`No video element for recording ${id}.`);
-        return { currentTime: video.currentTime, paused: video.paused, readyState: video.readyState, error: video.error?.message ?? null };
+        return { currentTime: video.currentTime, paused: video.paused, playbackRate: video.playbackRate, readyState: video.readyState, error: video.error?.message ?? null };
       }),
     };
   }, recordingIds);

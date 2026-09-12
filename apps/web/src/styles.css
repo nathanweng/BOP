@@ -231,6 +231,8 @@ video.unreleased { visibility: hidden; }
 .scrubber-track.is-disabled { opacity: .4; }
 .scrubber-status { grid-column: 2; font: 10px var(--mono); color: #a7b79b; padding-left: 8px; }
 .button-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.speed-choice { display: flex; gap: 4px; }
+.speed-choice button[aria-pressed="true"] { background: #dce8cc; border-color: #dce8cc; color: #17200f; }
 .playback-bar button { border-color: #5d6b53; color: #dbe4d1; min-height: 40px; font-size: 11px; }
 .playback-bar button:hover:not(:disabled) { background: #35432b; border-color: #9aac8a; }
 .playback-bar button.primary { background: #dce8cc; border-color: #dce8cc; color: #17200f; min-width: 66px; }

@@ -19,6 +19,7 @@ interface IncidentDetail {
     state: string;
     position_seconds: number;
     revision: number;
+    speed?: number;
   };
 }
 
@@ -293,6 +294,23 @@ test('a lost clock connection freezes local playback and recovery confirms serve
   await expect.poll(async () => (await readPlaybackSample(page, [first.id])).incidentTime).toBeGreaterThan(recoveredPlayback.position_seconds + 0.3);
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
+});
+
+test('demo replay speeds advance the shared clock and video rate', async ({ page, request, mp4Path }) => {
+  const incident = await createIncident(page, 'demo speed');
+  const camera = await uploadRecording(page, incident.id, mp4Path, 'Camera A', 0);
+  await expect(page.getByRole('button', { name: '1×', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Play', exact: true }).click();
+  await expect.poll(async () => (await readPlaybackSample(page, [camera.id])).videos[0].playbackRate).toBe(1);
+  await page.getByRole('button', { name: '4×', exact: true }).click();
+  await expect(page.getByRole('button', { name: '4×', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const before = await readPlaybackSample(page, [camera.id]);
+  await expect.poll(async () => {
+    const sample = await readPlaybackSample(page, [camera.id]);
+    return sample.videos[0].playbackRate === 4 && sample.incidentTime > before.incidentTime + 0.6;
+  }).toBe(true);
+  const stored = await request.get(`${apiURL}/api/incidents/${incident.id}`);
+  expect((await stored.json() as IncidentDetail).playback.speed).toBe(4);
 });
 
 test('an incident can be removed from the library', async ({ page, request }) => {

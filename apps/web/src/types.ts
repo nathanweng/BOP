@@ -80,11 +80,14 @@ export interface EventHistoryData {
   error: string | null;
 }
 
+export type PlaybackSpeed = 1 | 2 | 4;
+
 export interface Playback {
   run_id: string;
   state: 'paused' | 'playing' | 'ended';
   position_seconds: number;
   duration_seconds: number;
+  speed: PlaybackSpeed;
   server_time: string;
   revision: number;
 }
@@ -99,8 +102,9 @@ export interface ClockSample {
   receivedAt: number;
 }
 
-export type PlaybackAction = 'play' | 'pause' | 'restart' | 'seek';
+export type PlaybackAction = 'play' | 'pause' | 'restart' | 'seek' | 'set_speed';
 
 export type PlaybackCommand =
   | { action: 'play' | 'pause' | 'restart' }
-  | { action: 'seek'; positionSeconds: number };
+  | { action: 'seek'; positionSeconds: number }
+  | { action: 'set_speed'; speed: PlaybackSpeed };

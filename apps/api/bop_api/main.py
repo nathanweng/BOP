@@ -461,10 +461,16 @@ def create_app(
             current = playback_view(run, recordings, timestamp)
             if payload.action == "restart":
                 run = PlaybackRun(id=str(uuid4()), incident_id=incident_id, created_at=timestamp, anchor_at=timestamp,
-                                  revision=run.revision + 1, position_seconds=0, state="paused")
+                                  revision=run.revision + 1, position_seconds=0, state="paused", speed=run.speed)
                 session.add(run)
                 session.flush()
                 incident.active_run_id = run.id
+            elif payload.action == "set_speed":
+                run.position_seconds = current.position_seconds
+                run.anchor_at = timestamp
+                run.speed = float(payload.speed or 1)
+                run.state = "ended" if current.state == "ended" else ("playing" if current.state == "playing" else "paused")
+                run.revision += 1
             elif payload.action == "play":
                 if not recordings:
                     raise HTTPException(409, "Upload at least one valid recording before playing.")
