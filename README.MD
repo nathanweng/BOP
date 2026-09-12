@@ -6,6 +6,8 @@ The product is an incident-review workspace for supervisors or arriving responde
 
 The authoritative product requirements are in [Bodycam MVP Spec.md](./Bodycam%20MVP%20Spec.md). Read this README and the specification before changing the architecture or adding a feature.
 
+For reproducible contributor setup, exact runtime dependencies, backend storage locations, environment variables, and verification commands, see [CONTRIBUTOR_SETUP.md](./CONTRIBUTOR_SETUP.md).
+
 ## Project status
 
 The current milestone is the working upload and replay foundation. The full MVP requirements below describe later work as well; they are not claims that analysis is implemented.
