@@ -15,14 +15,16 @@ def test_provider_sources_and_timestamps(monkeypatch, settings):
         def __enter__(self):
             from io import StringIO
             return StringIO(json.dumps({"choices": [{"message": {"content": json.dumps({
-                "updates": [], "new_events": [{"segment_id": "source", "title": "Help reportedly arrives"}]
+                "updates": [], "new_events": [{"id": "new-1", "segment_id": "source", "title": "Help reportedly arrives"}]
             })}}]}))
         def __exit__(self, *args):
             pass
     def respond(request, timeout):
         payload = json.loads(request.data)
         assert json.loads(payload["messages"][1]["content"])["transcript_sources"][0]["text"] == source.text
-        assert timeout == 90
+        schema = json.dumps(payload["response_format"]["json_schema"]["schema"])
+        assert "minLength" not in schema and "maxItems" not in schema
+        assert timeout == 180
         return Response()
     monkeypatch.setattr("bop_api.events.urlopen", respond)
     events = generate_events(settings, [source])
@@ -42,7 +44,7 @@ def test_existing_events_keep_timestamp_and_receive_status(monkeypatch, settings
         def __enter__(self):
             from io import StringIO
             return StringIO(json.dumps({"choices": [{"message": {"content": json.dumps({
-                "updates": [{"event_id": "event-1", "supporting_segment_id": "later", "status": "disproven"}], "new_events": []
+                "updates": [{"event_id": "event-1", "supporting_segment_id": "later", "status": "disproven", "reason": "Later speaker corrects the arrival report."}], "new_events": []
             })}}]}))
         def __exit__(self, *args):
             pass
@@ -88,18 +90,29 @@ def test_history_persistence_failure_and_restart(app, client, incident, monkeypa
         assert [s.id for s in segments] == ["source"]
         assert existing_events == []
         return result
-    monkeypatch.setattr("bop_api.main.generate_events", generate)
+    configured.state.events.generator = generate
     path = f"/api/incidents/{incident['id']}/events"
     with TestClient(configured) as api:
-        assert api.post(path).json()["events"] == result
+        assert api.get(path).json()["state"] == "queued"
+        assert configured.state.events.process_incident(incident['id']) is True
         assert api.get(path).json()["events"] == result
+        assert api.get(path).json()["processed_segments"] == 1
+        assert configured.state.events.process_incident(incident['id']) is False
+        with app.state.sessions() as session:
+            session.get(PlaybackRun, run_id).position_seconds = 22
+            session.commit()
         def fail(*args):
             raise ValueError("secret provider body")
-        monkeypatch.setattr("bop_api.main.generate_events", fail)
-        response = api.post(path)
-        assert response.status_code == 502
+        configured.state.events.generator = fail
+        assert configured.state.events.process_incident(incident['id']) is False
+        response = api.get(path)
+        assert response.json()["state"] == "retrying"
         assert "secret" not in response.text
         assert api.get(path).json()["events"] == result
+        configured.state.events.generator = lambda *args: result
+        posted = api.post(path).json()
+        assert posted["state"] == "idle"
+        assert posted["events"] == result
         playback = api.get(f"/api/incidents/{incident['id']}/playback").json()
         assert api.post(f"/api/incidents/{incident['id']}/playback", json={
             "action": "restart", "expected_revision": playback["revision"]}).status_code == 200

@@ -100,3 +100,9 @@ class EventHistory(Base):
 
     run_id: Mapped[str] = mapped_column(ForeignKey("playback_runs.id"), primary_key=True)
     events_json: Mapped[str] = mapped_column(Text)
+    processed_json: Mapped[str] = mapped_column(Text, default="[]", server_default="[]")
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)

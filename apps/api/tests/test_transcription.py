@@ -391,6 +391,7 @@ def test_health_reports_transcription_configured(settings, clock, monkeypatch):
     with TestClient(unconfigured) as client:
         body = client.get("/api/health").json()
         assert body["transcription_configured"] is False
+        assert body["events_configured"] is False
 
     configured = create_app(replace(settings, xai_api_key="test-key"), clock, transcriber=FakeTranscriber())
     with TestClient(configured) as client:

@@ -2,7 +2,6 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 import json
 import logging
-import json
 import os
 from pathlib import Path
 import shutil
@@ -19,8 +18,8 @@ from starlette.formparsers import MultiPartException
 from .config import Settings
 from .database import make_database
 from .media import media_path, stage_upload
-from .models import EventHistory, Incident, PlaybackRun, Recording, TranscriptSegment
-from .events import generate_events, normalize_events
+from .models import Incident, PlaybackRun, Recording
+from .event_service import EventService
 from .playback import playback_view, utc
 from .schemas import (
     IncidentCreate,
@@ -148,15 +147,18 @@ def create_app(
         resolved_transcriber,
         clock=lambda: utc(resolved_clock()),
     )
+    events_service = EventService(settings, sessions, lambda: utc(resolved_clock()))
 
     @asynccontextmanager
     async def lifespan(_app):
         settings.media_root.mkdir(parents=True, exist_ok=True)
         transcription.start()
+        events_service.start()
         try:
             yield
         finally:
             transcription.stop()
+            events_service.stop()
             engine.dispose()
 
     app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
@@ -166,6 +168,7 @@ def create_app(
     app.state.settings = settings
     app.state.clock = resolved_clock
     app.state.transcription = transcription
+    app.state.events = events_service
 
     def now():
         return utc(app.state.clock())
@@ -270,6 +273,7 @@ def create_app(
         media_ready = all(shutil.which(binary) for binary in (settings.ffmpeg_binary, settings.ffprobe_binary))
         storage_ready = settings.media_root.is_dir() and os.access(settings.media_root, os.W_OK)
         transcription_configured = bool(settings.xai_api_key)
+        events_configured = bool(settings.openrouter_api_key)
         ready = database_ready and media_ready and storage_ready
         return JSONResponse(
             {
@@ -278,6 +282,7 @@ def create_app(
                 "media_tools": media_ready,
                 "media_storage": storage_ready,
                 "transcription_configured": transcription_configured,
+                "events_configured": events_configured,
             },
             status_code=200 if ready else 503,
         )
@@ -478,46 +483,20 @@ def create_app(
     def get_events(incident_id: str, session: Session = Depends(session_dependency)):
         incident = incident_row(session, incident_id)
         run = current_run(session, incident)
-        history = session.get(EventHistory, run.id)
-        return {"run_id": run.id, "configured": bool(settings.openrouter_api_key),
-                "events": normalize_events(json.loads(history.events_json)) if history else []}
+        return events_service.view(session, incident, run)
 
     @app.post("/api/incidents/{incident_id}/events")
     def update_events(incident_id: str, session: Session = Depends(session_dependency)):
         incident = incident_row(session, incident_id)
         run = current_run(session, incident)
-        run_id = run.id
         if not settings.openrouter_api_key:
             raise HTTPException(503, "Set OPENROUTER_API_KEY in .env and restart the API.")
-        cutoff = playback_view(run, recordings_for(session, incident_id), now()).position_seconds
-        segments = list(session.scalars(select(TranscriptSegment).where(
-            TranscriptSegment.run_id == run_id,
-            TranscriptSegment.status == "completed",
-            TranscriptSegment.incident_end_seconds <= cutoff,
-        ).order_by(TranscriptSegment.incident_start_seconds, TranscriptSegment.id)))
-        if not segments:
-            raise HTTPException(409, "No completed transcripts yet. Play the recordings and wait for transcription.")
-        history = session.get(EventHistory, run_id)
-        existing_events = normalize_events(json.loads(history.events_json)) if history else []
-        # Release the read transaction during the provider call.
-        session.expunge_all()
+        run_id = run.id
         session.rollback()
-        try:
-            events = generate_events(settings, segments, existing_events)
-        except Exception:
-            # Provider bodies and exception strings can contain credentials or source text.
-            raise HTTPException(502, "Event generation failed. Check the OpenRouter key, model, and available credits, then retry.") from None
-        incident = incident_row(session, incident_id, lock=True)
-        if incident.active_run_id != run_id:
-            raise HTTPException(409, "Replay restarted during generation. Generate history for the new run.")
-        history = session.get(EventHistory, run_id)
-        if history is None:
-            history = EventHistory(run_id=run_id, events_json=json.dumps(events))
-            session.add(history)
-        else:
-            history.events_json = json.dumps(events)
-        session.commit()
-        return {"run_id": run_id, "configured": True, "events": events}
+        events_service.retry(run_id)
+        events_service.process_incident(incident_id)
+        incident = incident_row(session, incident_id)
+        return events_service.view(session, incident, current_run(session, incident))
 
     return app
 
