@@ -6,6 +6,7 @@ import { CameraFeed } from './CameraFeed';
 import { EventHistory } from './EventHistory';
 import { formatTime } from './clock';
 import { useSelection } from './selection';
+import { processedThrough } from './timeline';
 import type { Incident, Recording, RecordingTranscript } from './types';
 import { useReplay } from './useReplay';
 
@@ -181,37 +182,27 @@ function Workspace({ incident }: { incident: Incident }) {
   const ending = replay.position >= duration && duration > 0;
   const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? 'Playing' : 'Paused';
   const displayPosition = scrubbing ? scrubValue : replay.position;
-  // "Processed" cutoff = strict high water mark of segments the shared clock
-  // has released for transcription. It does NOT extend to the current playback
-  // position, so the scrubber can visibly distinguish the played region from
-  // the transcribed region during forward playback ahead of transcription.
-  let processedCutoff = 0;
-  if (transcripts.data) {
-    for (const feed of transcripts.data.recordings) {
-      for (const segment of feed.segments) {
-        if (segment.incident_end_seconds > processedCutoff) processedCutoff = segment.incident_end_seconds;
-      }
-    }
-  }
-  if (duration > 0 && processedCutoff > duration) processedCutoff = duration;
+  const currentRunTranscripts = transcripts.data?.run_id === replay.playback.run_id
+    ? transcripts.data.recordings
+    : [];
+  const processedCutoff = processedThrough(incident.recordings, currentRunTranscripts, duration);
   const processedPct = duration > 0 ? Math.min(100, (processedCutoff / duration) * 100) : 0;
   const playedPct = duration > 0 ? Math.min(100, (displayPosition / duration) * 100) : 0;
-  const scrubberDisabled = !hasCameras || !replay.connected || replay.pending || setupBusy || duration <= 0 || processedCutoff <= 0;
+  const scrubberDisabled = !hasCameras || !replay.connected || replay.pending || setupBusy || duration <= 0;
   const resetDisabled = !replay.connected || replay.pending || setupBusy || !hasCameras || (replay.playback.state === 'paused' && replay.position === 0);
   const clearDisabled = !replay.connected || replay.pending || setupBusy || incident.recordings.length === 0;
 
-  const clampToProcessed = (value: number) => Math.min(processedCutoff, Math.max(0, value));
+  const clampToDuration = (value: number) => Math.min(duration, Math.max(0, value));
 
   const beginScrub = () => {
     if (scrubberDisabled) return;
-    if (replay.playing) void replay.control('pause');
-    setScrubValue(clampToProcessed(replay.position));
+    setScrubValue(clampToDuration(replay.position));
     setScrubbing(true);
   };
 
   const commitScrub = (value: number) => {
     setScrubbing(false);
-    void replay.control({ action: 'seek', positionSeconds: clampToProcessed(value) });
+    void replay.control({ action: 'seek', positionSeconds: clampToDuration(value) });
   };
 
   const confirmClearHistory = () => {
@@ -236,13 +227,15 @@ function Workspace({ incident }: { incident: Incident }) {
         <div
           className={`scrubber-track${scrubberDisabled ? ' is-disabled' : ''}`}
           style={{ ['--played' as string]: `${playedPct}%`, ['--processed' as string]: `${processedPct}%` }}
+          title={`Processed through ${formatTime(processedCutoff)}`}
         >
+          <span className="scrubber-played" aria-hidden="true" />
           <input
             type="range"
             className="scrubber"
             aria-label="Scrub incident timeline"
             aria-valuemin={0}
-            aria-valuemax={processedCutoff}
+            aria-valuemax={duration}
             aria-valuenow={displayPosition}
             data-testid="incident-scrubber"
             data-processed-seconds={processedCutoff.toFixed(3)}
@@ -253,16 +246,17 @@ function Workspace({ incident }: { incident: Incident }) {
             disabled={scrubberDisabled}
             onPointerDown={beginScrub}
             onKeyDown={(event) => { if (['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) beginScrub(); }}
-            onChange={(event) => setScrubValue(clampToProcessed(Number(event.target.value)))}
+            onChange={(event) => setScrubValue(clampToDuration(Number(event.target.value)))}
             onPointerUp={(event) => { if (scrubbing) commitScrub(Number((event.target as HTMLInputElement).value)); }}
             onBlur={(event) => { if (scrubbing) commitScrub(Number(event.target.value)); }}
             onKeyUp={(event) => { if (scrubbing && ['ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown', 'Home', 'End'].includes(event.key)) commitScrub(Number((event.target as HTMLInputElement).value)); }}
           />
         </div>
+        <span className="scrubber-status" data-testid="processed-through">Processed through {formatTime(processedCutoff)}</span>
       </div>
       <div className="button-row">
         <button type="button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
-        <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy}>Pause</button>
+        <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy || scrubbing}>Pause</button>
         <button type="button" onClick={() => void replay.control({ action: 'seek', positionSeconds: 0 })} disabled={resetDisabled} data-testid="reset-to-start">Reset to 0</button>
         <button type="button" className="danger" onClick={() => setConfirmClear(true)} disabled={clearDisabled} data-testid="clear-history">Clear all history</button>
         <label className="audio-choice"><input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} disabled={!selected} />Enable selected camera audio</label>
@@ -295,8 +289,8 @@ function Workspace({ incident }: { incident: Incident }) {
           {incident.recordings.map((recording) => <CameraFeed
             key={recording.id}
             recording={recording}
-            incidentTime={replay.position}
-            playing={replay.playing}
+            incidentTime={displayPosition}
+            playing={replay.playing && !scrubbing}
             selected={selectedId === recording.id}
             audioEnabled={audioEnabled}
             runId={replay.playback.run_id}
