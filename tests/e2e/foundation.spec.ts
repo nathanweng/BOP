@@ -294,3 +294,21 @@ test('a lost clock connection freezes local playback and recovery confirms serve
   await page.getByRole('button', { name: 'Pause', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Play', exact: true })).toBeEnabled();
 });
+
+test('an incident can be removed from the library', async ({ page, request }) => {
+  const incident = await createIncident(page, 'removable incident');
+  await page.getByRole('link', { name: 'All incidents' }).click();
+  await expect(page.getByRole('heading', { name: /Incidents/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: new RegExp(incident.title) })).toBeVisible();
+  await page.getByRole('button', { name: `Remove ${incident.title}`, exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Remove this incident?' })).toBeVisible();
+  const deleted = page.waitForResponse(
+    (response) => new URL(response.url()).pathname === `/api/incidents/${incident.id}` &&
+      response.request().method() === 'DELETE',
+  );
+  await page.getByRole('button', { name: 'Remove incident', exact: true }).click();
+  const deletedResponse = await deleted;
+  expect(deletedResponse.ok(), await deletedResponse.text()).toBeTruthy();
+  await expect(page.getByRole('button', { name: new RegExp(incident.title) })).toHaveCount(0);
+  expect((await request.get(`${apiURL}/api/incidents/${incident.id}`)).status()).toBe(404);
+});

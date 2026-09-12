@@ -57,6 +57,28 @@ export default function App() {
     else drawer.current?.close();
   }, [navOpen]);
 
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string } | null>(null);
+  const showLibrary = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('incident');
+    window.history.pushState({}, '', url);
+    transition(() => setIncidentId(null));
+  };
+  const removeIncident = useMutation({
+    mutationFn: (id: string) => api.deleteIncident(id),
+    onSuccess: async (_, id) => {
+      setPendingDelete(null);
+      queryClient.removeQueries({ queryKey: ['incident', id] });
+      await queryClient.invalidateQueries({ queryKey: ['incidents'] });
+      if (incidentId === id) showLibrary();
+    },
+  });
+  const askRemove = (entry: { id: string; title: string }) => {
+    removeIncident.reset();
+    setNavOpen(false);
+    setPendingDelete(entry);
+  };
+
   const matching = incidents.data?.filter((entry) => entry.title.toLowerCase().includes(search.toLowerCase())) ?? [];
   return (
     <div className="app-shell">
@@ -67,12 +89,24 @@ export default function App() {
         <span className="simulation-status"><span className="status-dot" />Simulated replay</span>
         <button className="new-incident-button" onClick={() => setNavOpen(true)} aria-controls="incident-nav" aria-expanded={navOpen}><span aria-hidden="true">+</span> New incident</button>
       </header>
+      {pendingDelete && <ConfirmDialog
+        title="Remove this incident?"
+        body={`This permanently deletes “${pendingDelete.title}”, including recordings, transcripts, and analysis. This cannot be undone.`}
+        confirmLabel={removeIncident.isPending ? 'Removing…' : 'Remove incident'}
+        confirmDisabled={removeIncident.isPending}
+        error={removeIncident.isError ? messageFor(removeIncident.error) : undefined}
+        onConfirm={() => removeIncident.mutate(pendingDelete.id)}
+        onCancel={() => { if (!removeIncident.isPending) setPendingDelete(null); }}
+      />}
       <dialog className="incident-drawer" ref={drawer} id="incident-nav" aria-labelledby="drawer-title" onCancel={() => setNavOpen(false)} onClick={(event) => { if (event.target === event.currentTarget) setNavOpen(false); }}>
         <div className="drawer-inner"><div className="drawer-heading"><span className="eyebrow">INCIDENT LIBRARY</span><button onClick={() => setNavOpen(false)} aria-label="Close incident library">✕</button></div>
           <h2 id="drawer-title">New incident<span>.</span></h2><CreateIncident onCreated={created} />
           <nav className="drawer-saved" aria-label="Saved incidents"><h3>Or return to an incident</h3>
             <label className="incident-search"><Icon name="search" /><span className="sr-only">Search incidents</span><input type="search" placeholder="Search incidents" value={search} onChange={(event) => setSearch(event.target.value)} /></label>
-            <ul className="incident-list">{matching.map((entry) => <li key={entry.id}><button onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>{entry.title}<small>{new Date(entry.created_at).toLocaleDateString()}</small><Icon name="arrow" /></button></li>)}</ul>
+            <ul className="incident-list">{matching.map((entry) => <li key={entry.id}>
+              <button type="button" onClick={() => openIncident(entry.id)} aria-current={entry.id === incidentId ? 'page' : undefined}>{entry.title}<small>{new Date(entry.created_at).toLocaleDateString()}</small><Icon name="arrow" /></button>
+              <button type="button" className="row-remove" aria-label={`Remove ${entry.title}`} onClick={() => askRemove(entry)}>✕</button>
+            </li>)}</ul>
             {incidents.isPending && <p role="status">Loading incidents…</p>}
             {incidents.isError && <p role="alert">{messageFor(incidents.error)} <button onClick={() => void incidents.refetch()}>Retry incidents</button></p>}
             {!incidents.isPending && !incidents.isError && !matching.length && <p className="muted">{search ? 'No matching incidents.' : 'No incidents yet.'}</p>}
@@ -85,38 +119,44 @@ export default function App() {
           <div className="library-toolbar"><span>All incidents <small>{incidents.data?.length ?? '—'}</small></span><label className="incident-search"><Icon name="search" /><span className="sr-only">Find an incident</span><input type="search" placeholder="Find an incident" value={search} onChange={(event) => setSearch(event.target.value)} /></label><button className="primary" onClick={() => setNavOpen(true)}>Create incident <Icon name="arrow" /></button></div>
           {incidents.isPending && <p role="status">Loading incidents…</p>}
           {incidents.isError && <p role="alert">{messageFor(incidents.error)} <button onClick={() => void incidents.refetch()}>Retry incidents</button></p>}
-          <div className="library-list"><div className="library-columns"><span>Incident</span><span>Created</span><span>Open workspace</span></div>{matching.map((entry, index) => <button className="library-row" key={entry.id} onClick={() => openIncident(entry.id)} style={{ ['--row' as string]: Math.min(index, 8) }}><span className="library-row-title"><span className="library-index">{String(index + 1).padStart(2, '0')}</span><span><strong>{entry.title}</strong><small>{entry.context || 'No incident context supplied'}</small></span></span><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><span className="library-open"><Icon name="arrow" /></span></button>)}</div>
+          <div className="library-list"><div className="library-columns"><span>Incident</span><span>Created</span><span>Open workspace</span><span className="sr-only">Remove</span></div>{matching.map((entry, index) => <div className="library-row" key={entry.id} style={{ ['--row' as string]: Math.min(index, 8) }}>
+            <button type="button" className="library-row-open" onClick={() => openIncident(entry.id)}><span className="library-row-title"><span className="library-index">{String(index + 1).padStart(2, '0')}</span><span><strong>{entry.title}</strong><small>{entry.context || 'No incident context supplied'}</small></span></span><time dateTime={entry.created_at}>{new Date(entry.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</time><span className="library-open"><Icon name="arrow" /></span></button>
+            <button type="button" className="row-remove" aria-label={`Remove ${entry.title}`} onClick={() => askRemove(entry)}>✕</button>
+          </div>)}</div>
           {!incidents.isPending && !incidents.isError && !matching.length && <div className="library-empty"><h2>{search ? 'No matching incidents.' : 'Ready for your first recording.'}</h2><p>{search ? 'Try another title.' : 'Create an incident to bring your recordings into one workspace.'}</p></div>}
           <footer className="library-footer"><span>BOP / INCIDENT REVIEW</span><span>Bizzy Ops · prerecorded, source-linked context.</span></footer>
         </div>}
         {incidentId && incident.isPending && <p className="workspace-loading" role="status">Opening incident…</p>}
         {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
-        {incident.data && <Workspace key={incident.data.id} incident={incident.data} />}
+        {incident.data && <Workspace key={incident.data.id} incident={incident.data} onRemove={() => { if (incident.data) askRemove(incident.data); }} />}
       </main>
     </div>
   );
 }
 
-function ConfirmDialog({ title, body, confirmLabel, onConfirm, onCancel }: {
+function ConfirmDialog({ title, body, confirmLabel, confirmDisabled, error, onConfirm, onCancel }: {
   title: string;
   body: string;
   confirmLabel: string;
+  confirmDisabled?: boolean;
+  error?: string;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onCancel(); };
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape' && !confirmDisabled) onCancel(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  }, [onCancel, confirmDisabled]);
   return (
-    <div className="modal-backdrop" role="presentation" onClick={onCancel}>
+    <div className="modal-backdrop" role="presentation" onClick={() => { if (!confirmDisabled) onCancel(); }}>
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title" onClick={(event) => event.stopPropagation()}>
         <h2 id="confirm-title">{title}</h2>
         <p>{body}</p>
+        {error && <p role="alert" className="error">{error}</p>}
         <div className="modal-actions">
-          <button type="button" onClick={onCancel}>Cancel</button>
-          <button type="button" className="danger" onClick={onConfirm} data-testid="confirm-clear">{confirmLabel}</button>
+          <button type="button" onClick={onCancel} disabled={confirmDisabled}>Cancel</button>
+          <button type="button" className="danger" onClick={onConfirm} disabled={confirmDisabled} data-testid="confirm-clear">{confirmLabel}</button>
         </div>
       </div>
     </div>
@@ -144,7 +184,7 @@ function CreateIncident({ onCreated }: { onCreated: (incident: Incident) => Prom
   </form>;
 }
 
-function Workspace({ incident }: { incident: Incident }) {
+function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () => void }) {
   const queryClient = useQueryClient();
   const replay = useReplay(incident.id, incident.playback);
   const selectedId = useSelection((state) => state.selectedByIncident[incident.id]) ?? incident.recordings[0]?.id;
@@ -232,7 +272,7 @@ function Workspace({ incident }: { incident: Incident }) {
   };
 
   return <div className="workspace">
-    <div className="incident-heading"><div><a className="incident-back" href="/">← All incidents</a><h1>{incident.title}</h1>{incident.context && <p className="context">{incident.context}</p>}</div><span className={`status connection-status${replay.connected ? ' connected' : ''}`}><span className="status-dot" />{replay.connected ? 'Replay connected' : 'Replay disconnected'}</span></div>
+    <div className="incident-heading"><div><a className="incident-back" href="/">← All incidents</a><h1>{incident.title}</h1>{incident.context && <p className="context">{incident.context}</p>}</div><div className="incident-heading-actions"><span className={`status connection-status${replay.connected ? ' connected' : ''}`}><span className="status-dot" />{replay.connected ? 'Replay connected' : 'Replay disconnected'}</span><button type="button" className="danger" onClick={onRemove} data-testid="remove-incident">Remove incident</button></div></div>
     <div className="incident-meta" aria-label="Incident overview">
       <span><Icon name="camera" />{incident.recordings.length} {incident.recordings.length === 1 ? 'camera' : 'cameras'}</span>
       <span><Icon name="clock" />{formatTime(duration)} total</span>

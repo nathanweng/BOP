@@ -8,7 +8,17 @@ from sqlalchemy import event, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from bop_api.main import create_app
-from bop_api.models import PlaybackRun, Recording
+from bop_api.models import (
+    EventHistory,
+    KnowledgeItem,
+    KnowledgeObservation,
+    KnowledgeSupport,
+    KnowledgeVersion,
+    PlaybackRun,
+    Recording,
+    SituationReportVersion,
+    TranscriptSegment,
+)
 from conftest import upload
 
 
@@ -272,6 +282,59 @@ def test_commit_failure_removes_staged_file(client, incident, app, media_fixture
         event.remove(session_type, "before_commit", fail_media_commit)
     assert list(settings.media_root.iterdir()) == []
     assert client.get(f"/api/incidents/{incident['id']}").json()["recordings"] == []
+
+
+def test_delete_incident_removes_records_media_and_related_runs(client, prepared, app, settings, clock):
+    incident_id = prepared["id"]
+    run_id = prepared["playback"]["run_id"]
+    recording_id = prepared["recordings"][0]["id"]
+    assert list(settings.media_root.glob("*.mp4"))
+    with app.state.sessions() as session:
+        session.add(TranscriptSegment(
+            id="seg-delete", run_id=run_id, recording_id=recording_id,
+            local_start_seconds=0, local_end_seconds=1, incident_start_seconds=0,
+            incident_end_seconds=1, status="completed", text="source", created_at=clock(),
+        ))
+        session.add(EventHistory(run_id=run_id, events_json="[]"))
+        session.add(SituationReportVersion(
+            id="sitrep-delete", run_id=run_id, input_hash="a" * 64, known_through=1,
+            created_at=clock(), status="completed", payload_json="{}",
+        ))
+        session.add(KnowledgeVersion(
+            id="know-delete", run_id=run_id, input_hash="b" * 64, status="completed",
+            model="test", created_at=clock(),
+        ))
+        session.flush()
+        session.add(KnowledgeObservation(
+            id="obs-delete", version_id="know-delete", segment_id="seg-delete",
+            text="observed", attribution="Camera A",
+        ))
+        session.add(KnowledgeItem(
+            id="item-delete", version_id="know-delete", item_key="n1", kind="claim",
+            label="Claim", description="Claim", uncertainty="",
+        ))
+        session.flush()
+        session.add(KnowledgeSupport(item_id="item-delete", observation_id="obs-delete"))
+        session.commit()
+    current = client.get(f"/api/incidents/{incident_id}").json()
+    assert control(client, incident_id, "restart", current["playback"]["revision"]).status_code == 200
+    other = client.post("/api/incidents", json={"title": "Keep this incident"}).json()
+    response = client.delete(f"/api/incidents/{incident_id}")
+    assert response.status_code == 204, response.text
+    assert client.get(f"/api/incidents/{incident_id}").status_code == 404
+    assert client.delete(f"/api/incidents/{incident_id}").status_code == 404
+    listed = client.get("/api/incidents").json()
+    assert incident_id not in [entry["id"] for entry in listed]
+    assert other["id"] in [entry["id"] for entry in listed]
+    assert client.get(f"/api/incidents/{other['id']}").status_code == 200
+    assert list(settings.media_root.glob("*.mp4")) == []
+    with app.state.sessions() as session:
+        assert session.get(PlaybackRun, run_id) is None
+        assert session.get(Recording, recording_id) is None
+        assert session.get(TranscriptSegment, "seg-delete") is None
+        assert session.get(EventHistory, run_id) is None
+        assert session.get(SituationReportVersion, "sitrep-delete") is None
+        assert session.get(KnowledgeVersion, "know-delete") is None
 
 
 def test_health_requires_database_media_tools_and_storage(client, app, settings, clock):
