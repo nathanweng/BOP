@@ -39,8 +39,8 @@ test('history polls automatically, colors corrections, and shows evidence times'
   await expect(page.getByRole('heading', { name: 'Suspicious or invalidated' })).toBeVisible();
   await expect(table.locator('.event-disproven')).toHaveCount(1);
   await expect(table.locator('.event-outdated')).toHaveCount(1);
-  await expect(table.locator('.event-disproven')).toHaveCSS('background-color', 'rgb(255, 240, 241)');
-  await expect(table.locator('.event-outdated')).toHaveCSS('background-color', 'rgb(255, 247, 214)');
+  await expect(table.locator('.event-disproven')).toHaveCSS('background-color', 'rgb(240, 218, 221)');
+  await expect(table.locator('.event-outdated')).toHaveCSS('background-color', 'rgb(240, 230, 188)');
   await expect(page.getByRole('button', { name: /Review evidence at/ })).toHaveCount(2);
   await expect(page.getByText('Upstairs has not been checked.')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Generate / update history' })).toHaveCount(0);

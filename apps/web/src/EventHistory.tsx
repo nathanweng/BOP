@@ -57,7 +57,7 @@ export function EventHistory({ incidentId, runId, recordings }: {
       </td>
     </tr>;
   };
-  return <details className="panel" open>
+  return <details className="panel event-history-panel" id="event-history" open>
     <summary>Event history</summary>
     <p className="muted">Current facts update as transcripts finish. Each fact keeps its own time. Yellow is suspicious and red is invalidated, with the evidence timestamp.</p>
     {data?.configured && data.state == null && (

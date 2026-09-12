@@ -48,13 +48,14 @@ export { expect };
 export async function createIncident(page: Page, prefix: string, context = 'Disposable playback verification.') {
   const title = `E2E ${prefix} ${randomUUID()}`;
   await page.goto('/');
+  await page.getByRole('button', { name: 'New incident', exact: true }).click();
   await page.getByLabel('Incident title', { exact: true }).fill(title);
   await page.getByLabel(/^Incident context/).fill(context);
   const created = page.waitForResponse(
     (response) => new URL(response.url()).pathname === '/api/incidents' &&
       response.request().method() === 'POST',
   );
-  await page.getByRole('button', { name: 'Create incident', exact: true }).click();
+  await page.getByRole('form', { name: 'Create incident', exact: true }).getByRole('button', { name: 'Create incident', exact: true }).click();
   const response = await created;
   expect(response.ok(), await response.text()).toBeTruthy();
   const incident = await response.json() as { id: string };
@@ -63,6 +64,9 @@ export async function createIncident(page: Page, prefix: string, context = 'Disp
 }
 
 export async function uploadRecording(page: Page, incidentId: string, mp4Path: string, label: string, offset: number) {
+  if (!(await page.getByLabel('Camera label', { exact: true }).isVisible())) {
+    await page.locator('.setup-panel > summary').click();
+  }
   await page.getByLabel('Camera label', { exact: true }).fill(label);
   await page.getByLabel('Start offset (seconds)', { exact: true }).fill(String(offset));
   await page.getByLabel('MP4 recording', { exact: true }).setInputFiles(mp4Path);
