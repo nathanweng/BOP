@@ -1,4 +1,4 @@
-# Incident knowledge map — next-stage functional specification
+# BOP (Bizzy Ops) knowledge map — next-stage functional specification
 
 ## 1. Purpose
 

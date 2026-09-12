@@ -3,9 +3,10 @@ import type { FormEvent } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, messageFor } from './api';
 import { CameraFeed } from './CameraFeed';
+import { SituationReport } from './SituationReport';
 import { EventHistory } from './EventHistory';
 import { BoardStatus } from './BoardStatus';
-import { formatTime } from './clock';
+import { demoSpeed, formatTime } from './clock';
 import { useSelection } from './selection';
 import { processedThrough } from './timeline';
 import type { Incident, Recording, RecordingTranscript } from './types';
@@ -83,7 +84,7 @@ export default function App() {
     <div className="app-shell">
       <a className="skip-link" href="#main-content">Skip to workspace</a>
       <header className="app-header">
-        <a className="brand" href="/" aria-label="Bodycam workspace home"><span className="brand-mark"><Icon name="layers" /></span>BODYCAM<span className="brand-slash">/</span></a>
+        <a className="brand" href="/" aria-label="BOP home"><span className="brand-mark"><Icon name="layers" /></span>BOP<span className="brand-slash">/</span><span className="brand-name">BIZZY OPS</span></a>
         <nav className="top-nav" aria-label="Workspace navigation"><a href="/" aria-current={!incidentId ? 'page' : undefined}>Incidents</a>{incidentId && <><a href="#stage-heading">Camera views</a><a href="#event-history">Events &amp; facts</a></>}</nav>
         <span className="simulation-status"><span className="status-dot" />Simulated replay</span>
         <button className="new-incident-button" onClick={() => setNavOpen(true)} aria-controls="incident-nav" aria-expanded={navOpen}><span aria-hidden="true">+</span> New incident</button>
@@ -123,7 +124,7 @@ export default function App() {
             <button type="button" className="row-remove" aria-label={`Remove ${entry.title}`} onClick={() => askRemove(entry)}>✕</button>
           </div>)}</div>
           {!incidents.isPending && !incidents.isError && !matching.length && <div className="library-empty"><h2>{search ? 'No matching incidents.' : 'Ready for your first recording.'}</h2><p>{search ? 'Try another title.' : 'Create an incident to bring your recordings into one workspace.'}</p></div>}
-          <footer className="library-footer"><span>BODYCAM / INCIDENT REVIEW</span><span>Prerecorded sources. Source-linked context.</span></footer>
+          <footer className="library-footer"><span>BOP / INCIDENT REVIEW</span><span>Bizzy Ops · prerecorded, source-linked context.</span></footer>
         </div>}
         {incidentId && incident.isPending && <p className="workspace-loading" role="status">Opening incident…</p>}
         {incidentId && incident.isError && <div className="panel"><p role="alert">{messageFor(incident.error)}</p><button onClick={() => void incident.refetch()}>Retry incident</button></div>}
@@ -195,6 +196,7 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
   const [scrubbing, setScrubbing] = useState(false);
   const [scrubValue, setScrubValue] = useState(0);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [eventTarget, setEventTarget] = useState<{ id: string }>();
   const [stageExpanded, setStageExpanded] = useState(false);
   useEffect(() => {
     if (!stageExpanded) return;
@@ -238,8 +240,9 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
   }, []);
 
   const duration = replay.playback.duration_seconds;
+  const speed = demoSpeed(replay.playback.speed);
   const ending = replay.position >= duration && duration > 0;
-  const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? 'Playing' : 'Paused';
+  const stateLabel = replay.holdReason ? 'Paused locally' : scrubbing ? 'Scrubbing' : ending ? 'Ended' : replay.playback.state === 'playing' ? (speed === 1 ? 'Playing' : `Playing · ${speed}×`) : 'Paused';
   const displayPosition = scrubbing ? scrubValue : replay.position;
   const currentRunTranscripts = transcripts.data?.run_id === replay.playback.run_id
     ? transcripts.data.recordings
@@ -301,6 +304,7 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
             recording={recording}
             incidentTime={displayPosition}
             playing={replay.playing && !scrubbing}
+            speed={speed}
             selected={selectedId === recording.id}
             audioEnabled={audioEnabled}
             runId={replay.playback.run_id}
@@ -326,17 +330,10 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
 
 
     <div className="analysis-layout">
-    <section className="panel deferred-panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">
-      <h2 id="reconstruction-heading"><span className="section-number">02</span> Scene reconstruction</h2>
-      <p className="empty-state">Awaiting observations to reconstruct the scene.</p>
-    </section>
-
-    <section className="panel deferred-panel" aria-labelledby="sitrep-heading" data-testid="analysis-empty-state">
-      <h2 id="sitrep-heading"><span className="section-number">03</span> Situation report</h2>
-      <p className="empty-state">Awaiting analyzed observations for a situation summary.</p>
-    </section>
+    <SituationReport incidentId={incident.id} runId={replay.playback.run_id} incidentTime={displayPosition}
+      onSelectEvent={(id) => setEventTarget({ id })} />
     <EventHistory key={replay.playback.run_id} incidentId={incident.id} runId={replay.playback.run_id} recordings={incident.recordings}
-      seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
+      eventTarget={eventTarget} seekDisabled={scrubberDisabled} onSeek={(seconds, recordingId) => {
         select(incident.id, recordingId);
         commitScrub(seconds);
         document.getElementById('stage-heading')?.scrollIntoView({ block: 'start', behavior: 'instant' });
@@ -380,6 +377,18 @@ function Workspace({ incident, onRemove }: { incident: Incident; onRemove: () =>
       <div className="button-row">
         <button type="button" className="primary play-button" onClick={() => void replay.control('play')} disabled={!mediaReady || !replay.connected || replay.pending || setupBusy || replay.playing || ending || scrubbing}>Play</button>
         <button type="button" onClick={() => void replay.control('pause')} disabled={replay.playback.state !== 'playing' || !replay.connected || replay.pending || setupBusy || scrubbing}>Pause</button>
+        <div className="speed-choice" role="group" aria-label="Replay speed">
+          {([1, 2, 4] as const).map((option) => (
+            <button
+              key={option}
+              type="button"
+              aria-pressed={speed === option}
+              data-testid={`replay-speed-${option}`}
+              onClick={() => void replay.control({ action: 'set_speed', speed: option })}
+              disabled={!replay.connected || replay.pending || setupBusy || scrubbing || speed === option}
+            >{option}×</button>
+          ))}
+        </div>
         <button type="button" onClick={() => void replay.control({ action: 'seek', positionSeconds: 0 })} disabled={resetDisabled} data-testid="reset-to-start">Reset to 0</button>
         <button type="button" className="danger" onClick={() => setConfirmClear(true)} disabled={clearDisabled} data-testid="clear-history">Clear all history</button>
         <label className="audio-choice"><input type="checkbox" checked={audioEnabled} onChange={(event) => setAudioEnabled(event.target.checked)} disabled={!selected} />Enable selected camera audio</label>

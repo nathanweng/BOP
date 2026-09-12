@@ -1,4 +1,4 @@
-# Body-camera situation report — MVP functional specification
+# BOP (Bizzy Ops) — MVP functional specification
 
 ## Objective
 Build a web app that combines uploaded recordings of the same incident into a continuously updated, source-linked situation report (sitrep). A supervisor or arriving responder should quickly understand what is known, what changed, and what remains uncertain across camera perspectives.

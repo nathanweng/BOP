@@ -28,6 +28,7 @@ class PlaybackRun(Base):
         CheckConstraint("position_seconds >= 0", name="ck_run_position_nonnegative"),
         CheckConstraint("revision >= 0", name="ck_run_revision_nonnegative"),
         CheckConstraint("state IN ('paused', 'playing', 'ended')", name="ck_run_state"),
+        CheckConstraint("speed IN (1, 2, 4)", name="ck_run_speed"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
@@ -35,6 +36,7 @@ class PlaybackRun(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     state: Mapped[str] = mapped_column(String(12), default="paused")
     position_seconds: Mapped[float] = mapped_column(Float, default=0)
+    speed: Mapped[float] = mapped_column(Float, default=1)
     anchor_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revision: Mapped[int] = mapped_column(Integer, default=0)
 

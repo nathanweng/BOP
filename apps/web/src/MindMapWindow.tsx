@@ -21,7 +21,7 @@ export function MindMapWindow() {
     onSuccess: () => { void playback.refetch(); },
   });
   return <main className="mindmap-window">
-    <header className="mindmap-window-header"><div><p className="eyebrow">Bodycam · Knowledge map</p>
+    <header className="mindmap-window-header"><div><p className="eyebrow">BOP · Knowledge map</p>
       <h1>{incident.data?.title || 'Incident mind map'}</h1></div>
       <span className="status">Independent map window</span></header>
     {!id && <p role="alert">Open the mind map from an incident.</p>}

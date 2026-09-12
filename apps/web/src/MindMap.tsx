@@ -16,28 +16,45 @@ interface Props {
 type Point = { x: number; y: number };
 const kinds: Record<string, string> = { person: 'Person', responder: 'Responder', location: 'Place', object: 'Object',
   event: 'Development', claim: 'Reported claim', question: 'Open question', recording: 'Recording' };
+const autoStarted = new Set<string>();
 
 export function MindMap(props: Props) {
   const query = useQuery({ queryKey: ['knowledge', props.incidentId, props.runId],
     queryFn: ({ signal }) => api.getKnowledge(props.incidentId, signal), refetchInterval: 3000, retry: false });
-  const retry = useMutation({ mutationFn: () => api.buildKnowledge(props.incidentId), onSuccess: () => { void query.refetch(); } });
+  const retry = useMutation({ mutationFn: (force: boolean) => api.buildKnowledge(props.incidentId, force), onSuccess: () => { void query.refetch(); } });
   const data = query.data?.run_id === props.runId ? query.data : undefined;
   const busy = data?.state === 'queued' || data?.state === 'processing' || retry.isPending;
+  const transcriptsReady = !!data && data.expected > 0 && data.completed >= data.expected;
+  const failed = Boolean(query.isError || retry.isError || data?.error);
+  const startBuild = retry.mutate;
+  useEffect(() => {
+    const key = `${props.incidentId}:${props.runId}`;
+    if (autoStarted.has(key) || busy || failed || !transcriptsReady || data?.version_id) return;
+    autoStarted.add(key);
+    startBuild(false);
+  }, [busy, data?.version_id, failed, props.incidentId, props.runId, startBuild, transcriptsReady]);
   const stages: Record<string, string> = { queued: 'Board queued', analyzing: 'Analyzing sources', preparing: 'Preparing evidence board', ready: 'Board ready', waiting: 'Waiting for transcripts' };
+  const action = failed ? 'Retry map build' : transcriptsReady ? 'Start generation now' : 'Skip waiting and start generation';
   return <section className="mind-map knowledge-map crime-board" aria-labelledby="mind-map-heading">
     <div className="mind-map-heading"><div><p className="eyebrow">INCIDENT RECONSTRUCTION / EVIDENCE BOARD</p>
       <h2 id="mind-map-heading">Incident mind map</h2></div><span className="board-status"><i className={busy ? 'working' : ''} />
-      {busy ? stages[data?.progress?.stage || 'analyzing'] : data?.version_id ? 'Ready to replay' : 'Awaiting transcripts'}</span></div>
-    {(query.isError || retry.isError || data?.error) && <div className="error" role="alert">
-      <p>{data?.error || messageFor(query.error || retry.error)}</p>
-      <button disabled={busy} onClick={() => query.isError ? void query.refetch() : retry.mutate()}>Retry map build</button></div>}
-    {(busy || !data?.version_id) && <div className={`board-build ${busy ? 'is-building' : ''}`} role="status">
+      {busy ? stages[data?.progress?.stage || 'analyzing'] : data?.version_id ? 'Ready to replay' : failed ? 'Board needs attention' : transcriptsReady ? 'Starting generation' : 'Awaiting transcripts'}</span></div>
+    {(busy || !data?.version_id) && <div className={`board-build ${busy ? 'is-building' : ''}${failed ? ' is-failed' : ''}`} role="status">
       <div className="board-build-sketch" aria-hidden="true"><i /><i /><i /><span /></div>
-      <div><strong>{busy ? stages[data?.progress?.stage || 'analyzing'] : 'Your evidence board builds automatically.'}</strong>
-        <p>{busy ? 'Connecting source-backed observations. You can keep reviewing the incident.' : data?.reason || 'Checking transcript completion…'}</p>
-        <small>{busy && data?.progress?.total_batches ? `${data.progress.completed_batches} of ${data.progress.total_batches} source batches complete`
-          : data ? `${data.completed} of ${data.expected} transcript windows complete` : 'Loading…'}</small>
-        {busy && <div className="board-build-track" aria-hidden="true"><span /></div>}</div>
+      <div className="board-build-copy">
+        <strong>{busy ? stages[data?.progress?.stage || 'analyzing'] : failed ? 'Map build needs attention.' : transcriptsReady ? 'Transcripts complete.' : 'Your evidence board builds automatically.'}</strong>
+        {failed && <p className="error" role="alert">{data?.error || messageFor(query.error || retry.error)}</p>}
+        <p>{busy ? 'Connecting source-backed observations. You can keep reviewing the incident.'
+          : failed ? 'Retry with the completed transcripts. Previous saved boards stay available.'
+            : transcriptsReady ? 'Starting mind map generation…' : data?.reason || 'Checking transcript completion…'}</p>
+        <div className="board-build-meta">
+          <small>{busy && data?.progress?.total_batches ? `${data.progress.completed_batches} of ${data.progress.total_batches} source batches complete`
+            : data ? `${data.completed} of ${data.expected} transcript windows complete` : 'Loading…'}</small>
+          {!busy && !data?.version_id && <button className="primary" disabled={!query.isError && !data?.completed}
+            onClick={() => query.isError ? void query.refetch() : retry.mutate(!transcriptsReady)}>{action}</button>}
+        </div>
+        {busy && <div className="board-build-track" aria-hidden="true"><span /></div>}
+      </div>
     </div>}
     {data?.stale && <p className="knowledge-notice">Sources changed. The previous board stays available while the update is prepared.</p>}
     {data?.version_id && <EvidenceBoard key={`${props.runId}:${data.version_id}`} {...props} data={data} />}

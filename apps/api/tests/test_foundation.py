@@ -31,6 +31,7 @@ def test_create_validation_and_empty_processing(client, incident):
     assert incident["playback"]["state"] == "paused"
     assert incident["playback"]["position_seconds"] == 0
     assert incident["playback"]["revision"] == 0
+    assert incident["playback"]["speed"] == 1
     assert client.get("/api/incidents").json()[0]["id"] == incident["id"]
     assert client.post("/api/incidents", json={"title": "   "}).status_code == 422
     assert client.post("/api/incidents", json={"title": "A", "unexpected": 1}).status_code == 422
@@ -161,6 +162,33 @@ def test_authoritative_clock_pause_and_restart(client, prepared, clock, app, med
         assert len(list(session.scalars(select(PlaybackRun)))) == 2
 
 
+def test_demo_playback_speed(client, prepared, clock):
+    incident_id = prepared["id"]
+    assert prepared["playback"]["speed"] == 1
+    started = control(client, incident_id, "play", prepared["playback"]["revision"]).json()
+    clock.advance(1)
+    live = client.get(f"/api/incidents/{incident_id}/playback").json()
+    assert live["position_seconds"] == pytest.approx(1)
+    faster = client.post(f"/api/incidents/{incident_id}/playback", json={
+        "action": "set_speed", "expected_revision": started["revision"], "speed": 4,
+    }).json()
+    assert faster["speed"] == 4
+    assert faster["state"] == "playing"
+    assert faster["position_seconds"] == pytest.approx(1)
+    clock.advance(0.5)
+    accelerated = client.get(f"/api/incidents/{incident_id}/playback").json()
+    assert accelerated["position_seconds"] == pytest.approx(3)
+    paused = control(client, incident_id, "pause", faster["revision"]).json()
+    assert paused["speed"] == 4
+    assert paused["position_seconds"] == pytest.approx(3)
+    clock.advance(10)
+    assert client.get(f"/api/incidents/{incident_id}/playback").json()["position_seconds"] == pytest.approx(3)
+    restarted = control(client, incident_id, "restart", paused["revision"]).json()
+    assert restarted["speed"] == 4
+    assert restarted["position_seconds"] == 0
+    assert restarted["state"] == "paused"
+
+
 def test_seek_preserves_run_and_clamps(client, prepared, clock):
     incident_id = prepared["id"]
     duration = prepared["playback"]["duration_seconds"]
@@ -194,6 +222,9 @@ def test_seek_preserves_run_and_clamps(client, prepared, clock):
     ({"action": "restart", "expected_revision": 0, "position_seconds": 1.0}, 422),
     ({"action": "seek", "expected_revision": 0, "position_seconds": -1}, 422),
     ({"action": "seek", "expected_revision": 0, "position_seconds": 86_401}, 422),
+    ({"action": "set_speed", "expected_revision": 0}, 422),
+    ({"action": "set_speed", "expected_revision": 0, "speed": 3}, 422),
+    ({"action": "play", "expected_revision": 0, "speed": 2}, 422),
 ])
 def test_playback_command_validation(client, prepared, payload, status):
     response = client.post(f"/api/incidents/{prepared['id']}/playback", json=payload)

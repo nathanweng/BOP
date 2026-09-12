@@ -12,8 +12,9 @@ def utc(value: datetime) -> datetime:
 def playback_view(run: PlaybackRun, recordings: list[Recording], now: datetime) -> PlaybackView:
     duration = max((r.start_offset_seconds + r.duration_seconds for r in recordings), default=0)
     position = run.position_seconds
+    speed = run.speed if run.speed in (1, 2, 4) else 1
     if run.state == "playing":
-        position += max(0, (utc(now) - utc(run.anchor_at)).total_seconds())
+        position += max(0, (utc(now) - utc(run.anchor_at)).total_seconds()) * speed
     position = min(duration, position)
     state = "ended" if duration > 0 and position >= duration else run.state
     return PlaybackView(
@@ -21,6 +22,7 @@ def playback_view(run: PlaybackRun, recordings: list[Recording], now: datetime) 
         state=state,
         position_seconds=position,
         duration_seconds=duration,
+        speed=speed,
         server_time=utc(now),
         revision=run.revision,
     )

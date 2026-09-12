@@ -3,7 +3,9 @@ from copy import deepcopy
 
 import pytest
 
-from bop_api.knowledge import KnowledgeService, compact_graph, validate_chunk, generate_knowledge
+from fastapi import HTTPException
+
+from bop_api.knowledge import KnowledgeService, compact_graph, validate_chunk, generate_knowledge, accepted_graph
 from bop_api.models import Incident, PlaybackRun, Recording, TranscriptSegment, KnowledgeVersion
 
 
@@ -42,10 +44,10 @@ def view(app, prepared, cutoff=None):
         return service.view(session, session.get(Incident, iid), session.get(PlaybackRun, rid), cutoff)
 
 
-def enqueue(app, prepared):
+def enqueue(app, prepared, force=False):
     service, iid, rid = prepared
     with app.state.sessions() as session:
-        return service.enqueue(session, session.get(Incident, iid), session.get(PlaybackRun, rid))['id']
+        return service.enqueue(session, session.get(Incident, iid), session.get(PlaybackRun, rid), force=force)['id']
 
 
 def test_readiness_requires_every_window_including_silent_tail_and_playback_end(app, prepared):
@@ -181,11 +183,51 @@ def test_invalid_provider_graph_rejected(mutation):
         validate_chunk(graph, {'s0', 's10'}, set())
 
 
+def test_force_enqueue_builds_from_completed_windows_before_the_run_is_ready(app, prepared):
+    with app.state.sessions() as session:
+        session.get(TranscriptSegment, 's20').status = 'failed'
+        session.commit()
+    assert not view(app, prepared)['ready']
+    with pytest.raises(HTTPException) as blocked:
+        enqueue(app, prepared)
+    assert blocked.value.status_code == 409
+    assert enqueue(app, prepared, force=True)
+    with app.state.sessions() as session:
+        for sid in ('s0', 's10', 's20'):
+            session.get(TranscriptSegment, sid).status = 'failed'
+        session.commit()
+    with pytest.raises(HTTPException) as empty:
+        enqueue(app, prepared, force=True)
+    assert empty.value.status_code == 409
+
+
 def test_api_readiness_and_build_gate(client, incident):
     path = f"/api/incidents/{incident['id']}/knowledge"
     assert client.get(path).json()['ready'] is False
     assert client.post(path).status_code == 409
+    assert client.post(path + '?force=true').status_code == 409
     assert client.get(path + '?cutoff_seconds=-1').status_code == 422
+
+
+def test_accepted_graph_keeps_supported_claims_and_drops_invented_citations():
+    graph = deepcopy(fixture_graph())
+    graph['observations'][0]['id'] = 'map_o1'
+    graph['observations'][1]['id'] = 'map_o2'
+    graph['nodes'][0]['id'] = 'map_n1'
+    graph['nodes'][0]['observation_ids'] = ['map_o1']
+    graph['nodes'][1]['id'] = 'map_n2'
+    graph['nodes'][1]['observation_ids'] = ['map_o2']
+    graph['edges'][0]['id'] = 'map_e1'
+    graph['edges'][0]['source'] = 'map_n2'
+    graph['edges'][0]['target'] = 'map_n1'
+    graph['edges'][0]['observation_ids'] = ['map_o2']
+    graph['observations'].append(dict(id='map_bad', segment_id='invented', text='no', attribution='Witness'))
+    graph['nodes'].append(dict(id='map_dropped', kind='claim', label='Invented', description='', uncertainty='',
+                               observation_ids=['map_bad']))
+    result = accepted_graph(graph, {'s0', 's10'}, set())
+    assert [n['id'] for n in result['nodes']] == ['map_n1', 'map_n2']
+    assert [e['id'] for e in result['edges']] == ['map_e1']
+    assert {obs['id'] for obs in result['observations']} == {'map_o1', 'map_o2'}
 
 
 def test_generator_sends_complete_history_once_with_fast_high_level_settings(monkeypatch, settings):
@@ -194,12 +236,14 @@ def test_generator_sends_complete_history_once_with_fast_high_level_settings(mon
     def provider(request):
         body = json.loads(request.data)
         content = json.loads(body['messages'][1]['content'])
-        requests.append((body, content['sources']))
+        requests.append((body, content))
         return {'choices': [{'message': {'content': json.dumps({'observations': [], 'nodes': [], 'edges': []})}}]}
     monkeypatch.setattr('bop_api.knowledge._provider_response', provider)
     sources = [{'segment_id': f's{i}', 'text': 'Silence marker.'} for i in range(25)]
     generate_knowledge(settings, sources)
-    assert requests[0][1] == sources
+    assert [s['segment_id'] for s in requests[0][1]['sources']] == [s['segment_id'] for s in sources]
+    assert requests[0][1]['allowed_segment_ids'] == [s['segment_id'] for s in sources]
+    assert all('speaker_words' not in s for s in requests[0][1]['sources'])
     assert requests[0][0]['model'] == settings.openrouter_knowledge_model
     assert requests[0][0]['max_tokens'] == 8000
     assert 'at most 12 nodes and 18 edges' in requests[0][0]['messages'][0]['content']

@@ -1,8 +1,12 @@
 import type { ClockSample, Recording } from './types';
 
+export function demoSpeed(speed: number | undefined): 1 | 2 | 4 {
+  return speed === 2 || speed === 4 ? speed : 1;
+}
+
 export function incidentPosition(sample: ClockSample, now: number): number {
   const { playback } = sample;
-  const elapsed = playback.state === 'playing' ? Math.max(0, now - sample.receivedAt) / 1000 : 0;
+  const elapsed = playback.state === 'playing' ? Math.max(0, now - sample.receivedAt) / 1000 * demoSpeed(playback.speed) : 0;
   return Math.max(0, Math.min(playback.duration_seconds, playback.position_seconds + elapsed));
 }
 

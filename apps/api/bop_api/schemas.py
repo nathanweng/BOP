@@ -36,17 +36,30 @@ class RecordingUpdate(StrictModel):
 
 
 class PlaybackCommand(StrictModel):
-    action: Literal["play", "pause", "restart", "seek"]
+    action: Literal["play", "pause", "restart", "seek", "set_speed"]
     expected_revision: int = Field(ge=0, strict=True)
     position_seconds: float | None = Field(default=None, ge=0, le=86_400)
+    speed: float | None = Field(default=None)
+
+    @field_validator("speed")
+    @classmethod
+    def demo_speeds(cls, value: float | None) -> float | None:
+        if value is not None and value not in (1, 2, 4):
+            raise ValueError("speed must be 1, 2, or 4")
+        return value
 
     @model_validator(mode="after")
-    def _position_matches_action(self) -> "PlaybackCommand":
+    def _fields_match_action(self) -> "PlaybackCommand":
         if self.action == "seek":
             if self.position_seconds is None:
                 raise ValueError("position_seconds is required for a seek command")
         elif self.position_seconds is not None:
             raise ValueError("position_seconds is only allowed with a seek command")
+        if self.action == "set_speed":
+            if self.speed is None:
+                raise ValueError("speed is required for a set_speed command")
+        elif self.speed is not None:
+            raise ValueError("speed is only allowed with a set_speed command")
         return self
 
 
@@ -55,6 +68,7 @@ class PlaybackView(BaseModel):
     state: Literal["paused", "playing", "ended"]
     position_seconds: float
     duration_seconds: float
+    speed: float
     server_time: datetime
     revision: int
 

@@ -6,6 +6,7 @@ interface Props {
   recording: Recording;
   incidentTime: number;
   playing: boolean;
+  speed: number;
   selected: boolean;
   audioEnabled: boolean;
   runId: string;
@@ -17,7 +18,7 @@ interface Props {
   onReady: (id: string, ready: boolean) => void;
 }
 
-export function CameraFeed({ recording, incidentTime, playing, selected, audioEnabled, runId, transcript, transcriptConfigured, transcriptCutoffSeconds, onSelect, onProblem, onReady }: Props) {
+export function CameraFeed({ recording, incidentTime, playing, speed, selected, audioEnabled, runId, transcript, transcriptConfigured, transcriptCutoffSeconds, onSelect, onProblem, onReady }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playPending = useRef(false);
   const syncRef = useRef<() => void>(() => undefined);
@@ -36,7 +37,8 @@ export function CameraFeed({ recording, incidentTime, playing, selected, audioEn
     const video = videoRef.current;
     if (!video) return;
     video.muted = !(audioEnabled && selected);
-  }, [audioEnabled, selected]);
+    video.playbackRate = speed > 0 ? speed : 1;
+  }, [audioEnabled, selected, speed]);
 
   const synchronize = useCallback(() => {
     const video = videoRef.current;
@@ -52,21 +54,25 @@ export function CameraFeed({ recording, incidentTime, playing, selected, audioEn
       return;
     }
 
+    video.playbackRate = speed > 0 ? speed : 1;
     if (video.seeking) return;
-    if (Math.abs(video.currentTime - local.seconds) > 0.25) {
+    const drift = Math.max(0.25, 0.15 * (speed > 0 ? speed : 1));
+    if (Math.abs(video.currentTime - local.seconds) > drift) {
       video.currentTime = local.seconds;
       return;
     }
     if (video.paused && !playPending.current) {
       playPending.current = true;
-      void video.play().catch((failure: unknown) => {
+      void video.play().then(() => {
+        if (videoRef.current) videoRef.current.playbackRate = speed > 0 ? speed : 1;
+      }).catch((failure: unknown) => {
         // A shared pause or a new seek can legitimately interrupt play().
         if (failure instanceof DOMException && failure.name === 'AbortError') return;
         const reason = failure instanceof Error ? failure.message : 'The browser could not start this recording.';
         reportProblem(`${recording.camera_label}: playback could not start. ${reason}`);
       }).finally(() => { playPending.current = false; });
     }
-  }, [incidentTime, playing, recording, mediaError, reportProblem]);
+  }, [incidentTime, playing, recording, mediaError, reportProblem, speed]);
 
   useEffect(() => {
     syncRef.current = synchronize;

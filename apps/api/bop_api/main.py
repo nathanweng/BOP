@@ -181,7 +181,7 @@ def create_app(
             situation_service.stop()
             engine.dispose()
 
-    app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="BOP (Bizzy Ops) incident workspace", version="0.1.0", lifespan=lifespan)
     app.add_middleware(UploadBodyLimit, limit=settings.max_upload_bytes + 65_536)
     app.state.engine = engine
     app.state.sessions = sessions
@@ -461,10 +461,16 @@ def create_app(
             current = playback_view(run, recordings, timestamp)
             if payload.action == "restart":
                 run = PlaybackRun(id=str(uuid4()), incident_id=incident_id, created_at=timestamp, anchor_at=timestamp,
-                                  revision=run.revision + 1, position_seconds=0, state="paused")
+                                  revision=run.revision + 1, position_seconds=0, state="paused", speed=run.speed)
                 session.add(run)
                 session.flush()
                 incident.active_run_id = run.id
+            elif payload.action == "set_speed":
+                run.position_seconds = current.position_seconds
+                run.anchor_at = timestamp
+                run.speed = float(payload.speed or 1)
+                run.state = "ended" if current.state == "ended" else ("playing" if current.state == "playing" else "paused")
+                run.revision += 1
             elif payload.action == "play":
                 if not recordings:
                     raise HTTPException(409, "Upload at least one valid recording before playing.")
@@ -559,9 +565,12 @@ def create_app(
         return knowledge_service.view(session, incident, current_run(session, incident), cutoff_seconds)
 
     @app.post("/api/incidents/{incident_id}/knowledge", status_code=202)
-    def build_knowledge(incident_id: str, session: Session = Depends(session_dependency)):
+    def build_knowledge(incident_id: str, force: bool = Query(False), session: Session = Depends(session_dependency)):
         incident = incident_row(session, incident_id, lock=True)
-        return knowledge_service.enqueue(session, incident, current_run(session, incident))
+        result = knowledge_service.enqueue(session, incident, current_run(session, incident), force=force)
+        if result['status'] == 'queued':
+            knowledge_service.begin(result['id'])
+        return result
 
     @app.get("/api/incidents/{incident_id}/knowledge/{version_id}/sources/{segment_id}/thumbnail")
     def board_thumbnail(incident_id: str, version_id: str, segment_id: str, session: Session = Depends(session_dependency)):

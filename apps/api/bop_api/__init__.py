@@ -1,2 +1,2 @@
-"""Bodycam incident API. Processing is intentionally deferred."""
+"""BOP (Bizzy Ops) incident API. Processing is intentionally deferred."""
 

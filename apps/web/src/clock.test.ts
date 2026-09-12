@@ -6,7 +6,7 @@ const initial: ClockSample = {
   receivedAt: 1_000,
   playback: {
     run_id: 'first-run', state: 'playing', position_seconds: 3,
-    duration_seconds: 20, server_time: '2026-09-12T12:00:00Z', revision: 2,
+    duration_seconds: 20, speed: 1, server_time: '2026-09-12T12:00:00Z', revision: 2,
   },
 };
 
@@ -21,6 +21,12 @@ describe('server-authoritative incident clock', () => {
     for (const state of ['paused', 'ended'] as const) {
       expect(incidentPosition({ ...initial, playback: { ...initial.playback, state } }, 10_000)).toBe(3);
     }
+  });
+
+  it('multiplies elapsed wall time by demo playback speed', () => {
+    expect(incidentPosition({ ...initial, playback: { ...initial.playback, speed: 2 } }, 2_000)).toBe(5);
+    expect(incidentPosition({ ...initial, playback: { ...initial.playback, speed: 4 } }, 2_000)).toBe(7);
+    expect(incidentPosition({ ...initial, playback: { ...initial.playback, speed: 4 } }, 100_000)).toBe(20);
   });
 
   it('ignores delayed snapshots that would overwrite a restart', () => {

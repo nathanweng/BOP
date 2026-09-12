@@ -26,6 +26,96 @@ test('automatic build shows real progress and becomes playable without a build c
   expect(builds).toBe(0);
 });
 
+test('completed transcripts start generation without a click', async ({ page }) => {
+  let builds = 0;
+  let force = false;
+  let state = 'not_built';
+  const playback = { run_id: 'ready-run', state: 'ended', position_seconds: 20, duration_seconds: 20,
+    revision: 0, server_time: new Date().toISOString() };
+  const incident = { id: 'ready-incident', title: 'Ready board', recordings: [], playback };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/knowledge') && route.request().method() === 'POST') {
+      builds++;
+      force = new URL(route.request().url()).searchParams.get('force') === 'true';
+      state = 'processing';
+      await route.fulfill({ json: { id: 'version', status: 'queued' } });
+      return;
+    }
+    await route.fulfill({ json: path.endsWith('/knowledge') ? {
+      run_id: playback.run_id, ready: true, state, completed: 2, expected: 2, failed: 0, reason: '',
+      stale: false, version_id: null, nodes: [], edges: [],
+      progress: { stage: state === 'processing' ? 'analyzing' : 'waiting', completed_batches: 0, total_batches: 0 },
+    } : path.endsWith('/playback') ? playback : incident });
+  });
+  await page.goto('/?incident=ready-incident&view=mindmap');
+  await expect.poll(() => builds).toBe(1);
+  expect(force).toBe(false);
+  await expect(page.getByText('Connecting source-backed observations. You can keep reviewing the incident.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Skip waiting and start generation' })).toHaveCount(0);
+});
+
+test('skip waiting starts generation before every transcript finishes', async ({ page }) => {
+  let builds = 0;
+  let force = false;
+  let state = 'not_built';
+  const playback = { run_id: 'skip-run', state: 'ended', position_seconds: 20, duration_seconds: 20,
+    revision: 0, server_time: new Date().toISOString() };
+  const incident = { id: 'skip-incident', title: 'Partial transcripts', recordings: [], playback };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/knowledge') && route.request().method() === 'POST') {
+      builds++;
+      force = new URL(route.request().url()).searchParams.get('force') === 'true';
+      state = 'processing';
+      await route.fulfill({ json: { id: 'version', status: 'queued' } });
+      return;
+    }
+    await route.fulfill({ json: path.endsWith('/knowledge') ? {
+      run_id: playback.run_id, ready: false, state, completed: 1, expected: 2, failed: 0,
+      reason: 'Waiting for transcripts: 1/2 complete; 0 failed.', stale: false, version_id: null, nodes: [], edges: [],
+      progress: { stage: 'waiting', completed_batches: 0, total_batches: 0 },
+    } : path.endsWith('/playback') ? playback : incident });
+  });
+  await page.goto('/?incident=skip-incident&view=mindmap');
+  await expect(page.getByText('Waiting for transcripts: 1/2 complete; 0 failed.')).toBeVisible();
+  await expect(page.getByText('1 of 2 transcript windows complete')).toBeVisible();
+  await page.getByRole('button', { name: 'Skip waiting and start generation' }).click();
+  await expect.poll(() => builds).toBe(1);
+  expect(force).toBe(true);
+});
+
+test('failed build keeps a single retry action in the waiting card', async ({ page }) => {
+  let builds = 0;
+  let force = false;
+  let state = 'failed';
+  const playback = { run_id: 'failed-run', state: 'ended', position_seconds: 20, duration_seconds: 20,
+    revision: 0, server_time: new Date().toISOString() };
+  const incident = { id: 'failed-incident', title: 'Failed board', recordings: [], playback };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/knowledge') && route.request().method() === 'POST') {
+      builds++;
+      force = new URL(route.request().url()).searchParams.get('force') === 'true';
+      state = 'processing';
+      await route.fulfill({ json: { id: 'version', status: 'queued' } });
+      return;
+    }
+    await route.fulfill({ json: path.endsWith('/knowledge') ? {
+      run_id: playback.run_id, ready: true, state, completed: 2, expected: 2, failed: 0, reason: '',
+      error: state === 'failed' ? 'Map build failed validation or its inputs changed. Saved maps are retained. Retry the build.' : undefined,
+      stale: false, version_id: null, nodes: [], edges: [],
+      progress: { stage: state === 'processing' ? 'analyzing' : 'failed', completed_batches: 0, total_batches: 0 },
+    } : path.endsWith('/playback') ? playback : incident });
+  });
+  await page.goto('/?incident=failed-incident&view=mindmap');
+  await expect(page.getByRole('button', { name: 'Retry map build' })).toHaveCount(1);
+  await expect(page.getByRole('button', { name: 'Start generation now' })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Retry map build' }).click();
+  await expect.poll(() => builds).toBe(1);
+  expect(force).toBe(false);
+});
+
 test('knowledge map shows people and connections, filters future statements and seeks the shared incident', async ({ page }) => {
   let commands = 0;
   const playback = { run_id: 'knowledge-run', state: 'paused', position_seconds: 12, duration_seconds: 30,

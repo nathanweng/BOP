@@ -4,13 +4,13 @@ import json
 import pytest
 
 from bop_api.models import Incident, PlaybackRun, Recording, TranscriptSegment, EventHistory, SituationReportVersion
-from bop_api.situation import SituationService, validate_report
+from bop_api.situation import SituationService, validate_report, supported_report, generate_report, ReportValidationError
 
 
 def report(ref='s0'):
-    return {'overview': [{'text': 'A witness reports an incident at the entrance.', 'source_ids': [ref]}],
+    return {'overview': [{'text': 'A witness reports an incident at the entrance.', 'source_ids': [ref], 'event_ids': ['event1']}],
             'developments': [], 'scene_status': [],
-            'clarifications': [{'text': 'Which entrance does the witness mean?', 'source_ids': [ref]}]}
+            'clarifications': [{'text': 'Which entrance does the witness mean?', 'source_ids': [ref], 'event_ids': ['event1']}]}
 
 
 @pytest.fixture
@@ -146,10 +146,113 @@ def test_restart_during_generation_cannot_publish_old_run(app, prepared, clock):
 ])
 def test_rejects_unsupported_report_items(invalid):
     with pytest.raises(ValueError):
-        validate_report(invalid, {'s0': {}})
+        validate_report(invalid, {'s0': {}}, [{'id': 'event1', 'source_ids': ['s0']}])
 
 
 def test_api_returns_honest_empty_state(client, incident):
     response = client.get(f"/api/incidents/{incident['id']}/situation-report")
     assert response.status_code == 200
     assert response.json()['report'] is None
+
+
+@pytest.mark.parametrize('event_ids,source_ids', [
+    ([], ['s0']), (['invented'], ['s0']), (['event2'], ['s0']),
+    (['event1', 'event2'], ['s0']),
+])
+def test_rejects_missing_or_mismatched_event_citations(event_ids, source_ids):
+    data = report()
+    data['overview'][0].update(event_ids=event_ids, source_ids=source_ids)
+    with pytest.raises(ValueError, match='event citation'):
+        validate_report(data, {'s0': {}, 's1': {}}, [
+            {'id': 'event1', 'source_ids': ['s0']}, {'id': 'event2', 'source_ids': ['s1']}])
+
+
+def test_summary_has_a_hard_reading_length_limit():
+    data = report()
+    data['overview'] *= 8
+    with pytest.raises(ValueError, match='eight-sentence'):
+        validate_report(data, {'s0': {}}, [{'id': 'event1', 'source_ids': ['s0']}])
+
+
+def test_saved_summary_preserves_exact_event_assessments(app, prepared, clock):
+    service, iid, _ = prepared
+    service.process(iid)
+    assert view(app, prepared)['report']['events']['event1']['status'] == 'current'
+    revise(app, prepared, clock)
+    service.generator = lambda *_: report('s20')
+    service.process(iid)
+    event = view(app, prepared)['report']['events']['event1']
+    assert event['status'] == 'outdated'
+    assert event['source_ids'] == ['s0', 's20']
+
+
+
+def test_provider_keeps_cited_sentences_and_omits_uncited_additions(monkeypatch):
+    from bop_api.config import Settings
+    import bop_api.situation as situation
+    data = report()
+    data['scene_status'] = [{'text': 'Unsupported present condition.', 'event_ids': [], 'source_ids': []}]
+    data['clarifications'] = [{'text': 'Generic unsupported question?', 'event_ids': [], 'source_ids': []}]
+    monkeypatch.setattr(situation, '_provider_response', lambda _: {
+        'choices': [{'finish_reason': 'stop', 'message': {'content': json.dumps(data)}}]})
+    result = generate_report(Settings(), {'sources': {'s0': {}},
+        'events': [{'id': 'event1', 'source_ids': ['s0']}]}, None)
+    assert result['overview'] == report()['overview']
+    assert result['scene_status'] == result['clarifications'] == []
+
+
+def test_provider_does_not_publish_when_all_sentences_are_unsupported():
+    data = {key: [] for key in report()}
+    data['overview'] = [{'text': 'Unsupported statement.', 'event_ids': [], 'source_ids': []}]
+    with pytest.raises(ReportValidationError, match='no sentences with valid event citations'):
+        supported_report(data, {'s0': {}}, [{'id': 'event1', 'source_ids': ['s0']}])
+
+
+@pytest.mark.parametrize('response, message', [
+    ({'choices': []}, 'no completion'),
+    ({'choices': [{'finish_reason': 'length'}]}, 'truncated'),
+    ({'choices': [{'finish_reason': 'stop', 'message': {'content': '{broken'}}]}, 'invalid JSON'),
+])
+def test_provider_failure_has_safe_actionable_diagnostic(monkeypatch, response, message):
+    from bop_api.config import Settings
+    import bop_api.situation as situation
+    from bop_api.events import EventProviderError
+    monkeypatch.setattr(situation, '_provider_response', lambda _: response)
+    with pytest.raises(EventProviderError, match=message):
+        generate_report(Settings(), {'sources': {}, 'events': []}, None)
+
+
+
+def test_redundant_machine_citation_suffix_is_removed_without_changing_claim():
+    data = report()
+    data['overview'][0]['text'] = 'A witness reports an incident (source_ids: ["s0"]).'
+    result = supported_report(data, {'s0': {}}, [{'id': 'event1', 'source_ids': ['s0']}])
+    assert result['overview'][0]['text'] == 'A witness reports an incident.'
+    assert result['overview'][0]['source_ids'] == ['s0']
+
+
+def test_recent_uncolored_events_rotate_while_old_context_remains_available(app, prepared, clock):
+    service, iid, rid = prepared
+    with app.state.sessions() as session:
+        recording = session.get(Recording, 'cam')
+        recording.duration_seconds = 300
+        session.get(PlaybackRun, rid).position_seconds = 200
+        session.add(TranscriptSegment(id='fresh', run_id=rid, recording_id='cam',
+            local_start_seconds=190, local_end_seconds=200, incident_start_seconds=190,
+            incident_end_seconds=200, status='completed', text='The driver is at the entrance.', created_at=clock()))
+        history = session.get(EventHistory, rid)
+        events = json.loads(history.events_json)
+        events.append({'id': 'fresh-event', 'segment_id': 'fresh', 'recording_id': 'cam',
+            'timestamp_seconds': 190, 'local_seconds': 190, 'title': 'Driver at entrance', 'status': 'current'})
+        history.events_json = json.dumps(events)
+        session.commit()
+        snapshot, digest, known, _ = service.inputs(session, session.get(Incident, iid), session.get(PlaybackRun, rid))
+        assert known == snapshot['known_through'] == 200
+        assert snapshot['recent_event_ids'] == ['fresh-event']
+        assert len(snapshot['events']) == 2  # Old context remains citable, not deleted.
+        events[0].update(status='outdated', assessment_history=[{'segment_id': 'fresh', 'status': 'outdated'}])
+        history.events_json = json.dumps(events)
+        session.commit()
+        updated, new_digest, _, _ = service.inputs(session, session.get(Incident, iid), session.get(PlaybackRun, rid))
+        assert updated['recent_event_ids'] == ['event1', 'fresh-event']
+        assert new_digest != digest

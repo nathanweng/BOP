@@ -57,7 +57,8 @@ export const api = {
   getSituationReport: (id: string, signal?: AbortSignal) => request<import('./SituationReport').SituationData>(`/incidents/${id}/situation-report`, { signal }),
   retrySituationReport: (id: string) => request<import('./SituationReport').SituationData>(`/incidents/${id}/situation-report`, { method: 'POST' }),
   getKnowledge: (id: string, signal?: AbortSignal) => request<import('./MindMap').KnowledgeGraph>(`/incidents/${id}/knowledge`, { signal }),
-  buildKnowledge: (id: string) => request<{ id: string; status: string }>(`/incidents/${id}/knowledge`, { method: 'POST' }),
+  buildKnowledge: (id: string, force = false) => request<{ id: string; status: string }>(
+    `/incidents/${id}/knowledge${force ? '?force=true' : ''}`, { method: 'POST' }),
   getEvents: (id: string, signal?: AbortSignal) => request<EventHistoryData>(`/incidents/${id}/events`, { signal }),
   generateEvents: (id: string) => request<EventHistoryData>(`/incidents/${id}/events`, { method: 'POST' }, 120000),
   listIncidents: (signal?: AbortSignal) => request<IncidentSummary[]>('/incidents', { signal }),
@@ -78,6 +79,7 @@ export const api = {
   controlPlayback: async (id: string, command: PlaybackCommand, expectedRevision: number) => {
     const body: Record<string, unknown> = { action: command.action, expected_revision: expectedRevision };
     if (command.action === 'seek') body.position_seconds = command.positionSeconds;
+    if (command.action === 'set_speed') body.speed = command.speed;
     return sample(await request<Playback>(`/incidents/${id}/playback`, { method: 'POST', ...jsonBody(body) }));
   },
   getTranscripts: (id: string, signal?: AbortSignal) => request<Transcripts>(`/incidents/${id}/transcripts`, { signal }, 5000),
