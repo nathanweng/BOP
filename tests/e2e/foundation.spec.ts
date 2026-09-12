@@ -164,16 +164,14 @@ test('real uploads, alignment and shared replay persist across reload and restar
     });
   });
 
-  await test.step('unimplemented processing stays empty and reports no analyzed timestamps', async () => {
+  await test.step('deferred analysis panels stay empty until observations exist', async () => {
     await expect(page.getByRole('heading', { name: 'Statement-based reconstruction', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Current situation report', exact: true })).toBeVisible();
-    await expect(page.getByText('Processing not implemented. Latest analyzed time is unavailable for every camera.', { exact: true })).toBeVisible();
     await expect(page.getByTestId('analysis-empty-state')).toContainText('No analyzed observations yet.');
     await expect(page.getByTestId('reconstruction-empty-state')).toContainText('No reconstruction is available.');
     const stored = await readIncident();
     for (const recording of stored.recordings) {
-      expect(recording.processing_status).toBe('not_implemented');
-      expect(recording.latest_analyzed_time_seconds).toBeNull();
+      expect(recording.processing_status).toBe('transcribing');
     }
   });
 });

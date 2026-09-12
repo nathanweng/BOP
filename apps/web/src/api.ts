@@ -1,4 +1,4 @@
-import type { ClockSample, Incident, IncidentSummary, Playback, PlaybackAction, Recording } from './types';
+import type { ClockSample, Incident, IncidentSummary, Playback, PlaybackAction, Recording, Transcripts } from './types';
 
 export class ApiError extends Error {
   constructor(message: string, public status: number) {
@@ -68,6 +68,7 @@ export const api = {
       method: 'POST', ...jsonBody({ action, expected_revision: expectedRevision }),
     },
   )),
+  getTranscripts: (id: string, signal?: AbortSignal) => request<Transcripts>(`/incidents/${id}/transcripts`, { signal }, 5000),
 };
 
 export function messageFor(error: unknown): string {

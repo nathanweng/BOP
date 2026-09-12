@@ -10,12 +10,12 @@ For reproducible contributor setup, exact runtime dependencies, backend storage 
 
 ## Project status
 
-The current milestone is the working upload and replay foundation. The full MVP requirements below describe later work as well; they are not claims that analysis is implemented.
+The current milestone extends the upload and replay foundation with per-camera live transcription. The full MVP requirements below describe later work as well; they are not claims that observation extraction is implemented.
 
-- **Complete:** persistent incident creation, MP4 upload and validation, manual camera alignment, backend-owned playback runs, synchronized browser video, and regression tests. Verified with real MP4s and local PostgreSQL.
-- **Needs verification:** Docker image builds and Compose startup (Docker is unavailable on the development machine); the added CI workflow has not yet run on GitHub. Large recordings near the upload limit and browsers other than Chrome need broader testing.
-- **Deferred:** segment release, audio extraction, transcription, observations, cross-camera grouping, sitrep generation, reconstruction, evidence review/corrections, worker/queue infrastructure, and SSE. No processing interfaces or placeholder services are being implemented in this milestone.
-- **Interface:** basic functional styling; map/location, reconstruction, sitrep, history, and evidence areas remain empty until supported data and processing exist. No sample incident facts or generated reports.
+- **Complete:** persistent incident creation, MP4 upload and validation, manual camera alignment, backend-owned playback runs, synchronized browser video, cutoff-gated segment release, FFmpeg audio extraction per segment, xAI Grok batch Speech-to-Text (behind a provider interface), and a live-updating transcript under each camera feed. Regression tests cover eligibility, restart isolation, silent recordings, provider failure, and configuration health.
+- **Needs verification:** Docker image builds and Compose startup (Docker is unavailable on the development machine); the CI workflow has not yet run on GitHub with the new schema. End-to-end verification with a real `XAI_API_KEY` and staged multi-camera footage is pending.
+- **Deferred:** observations, cross-camera grouping, sitrep generation, reconstruction, evidence review/corrections, Celery/Redis workers, and SSE. No observation-schema placeholders are being implemented in this milestone.
+- **Interface:** basic functional styling; map/location, reconstruction, sitrep, history, and evidence areas remain empty until supported data and processing exist. Each camera feed shows a live transcript panel that updates as segments are released and returned by the provider.
 
 ### Foundation boundaries
 
@@ -195,6 +195,20 @@ The GitHub Actions workflow repeats checks against PostgreSQL, validates Compose
 Worker commands do not exist yet because the processing workflow is deferred.
 
 Every feature change must update this README's status section and include the relevant verification result. Prefer small, reviewable changes that preserve the domain rules above. Do not add accounts, multi-user collaboration, live camera integrations, automatic clock synchronization, facial recognition, cross-camera person identification, tactical recommendations, automated report filing, calibrated probability scores, production agency integrations, full 3D reconstruction, or continuous visual analysis unless the scope is explicitly changed.
+
+## Live transcription (Grok STT)
+
+Live transcription is enabled per camera feed, driven by the same backend cutoff that owns replay.
+
+- Provider: xAI Grok batch Speech-to-Text (`POST https://api.x.ai/v1/stt`), kept behind a small `Transcriber` interface in `apps/api/bop_api/transcription/`.
+- Pipeline: playback advances → backend releases eligible segments (default 10 s, `SEGMENT_SECONDS`) → FFmpeg extracts only that window's audio to a temporary mono 16 kHz WAV → Grok returns text and word timestamps → the frontend polls `GET /api/incidents/{id}/transcripts` at ~1 Hz and appends completed cues under each camera.
+- Domain rules honored: no model ever sees media beyond the cutoff, transcripts are keyed by `run_id` so restart isolates them, failed segments never advance the analyzed cutoff, and silent recordings are marked `empty` without a provider call.
+
+Configure the API key locally and do not commit it:
+
+1. Copy `.env.example` to `.env` and set `XAI_API_KEY` to a key created in the [xAI console](https://console.x.ai/).
+2. Docker Compose reads `.env` automatically; native `dev:api` inherits the shell environment (put it in `.env` or export it in the shell).
+3. Verify with `curl http://127.0.0.1:8000/api/health` — the JSON body's `transcription_configured` becomes `true` when the key is present. The key itself is never returned.
 
 ## Questions and current assumptions
 

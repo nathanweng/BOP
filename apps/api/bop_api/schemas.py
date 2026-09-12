@@ -58,8 +58,34 @@ class RecordingView(BaseModel):
     size_bytes: int
     media_url: str
     validation_status: Literal["ready"] = "ready"
-    processing_status: Literal["not_implemented"] = "not_implemented"
-    latest_analyzed_time_seconds: None = None
+    processing_status: Literal["transcribing"] = "transcribing"
+    latest_analyzed_time_seconds: float | None = None
+
+
+class TranscriptSegmentView(BaseModel):
+    id: str
+    recording_id: str
+    run_id: str
+    local_start_seconds: float
+    local_end_seconds: float
+    incident_start_seconds: float
+    incident_end_seconds: float
+    status: Literal["queued", "processing", "completed", "failed", "empty"]
+    text: str | None = None
+    error: str | None = None
+
+
+class RecordingTranscript(BaseModel):
+    recording_id: str
+    latest_analyzed_time_seconds: float | None = None
+    segments: list[TranscriptSegmentView]
+
+
+class TranscriptsView(BaseModel):
+    run_id: str
+    incident_position_seconds: float
+    transcription_configured: bool
+    recordings: list[RecordingTranscript]
 
 
 class IncidentSummary(BaseModel):

@@ -1,6 +1,6 @@
 # Contributor setup and local storage
 
-This guide reproduces the current upload-and-replay foundation: React dashboard, FastAPI service, PostgreSQL metadata, validated MP4 storage, manual camera alignment, and synchronized playback. It does not include processing, transcription, observations, sitreps, or reconstruction generation.
+This guide reproduces the current upload, replay, and live-transcription foundation: React dashboard, FastAPI service, PostgreSQL metadata, validated MP4 storage, manual camera alignment, synchronized playback, cutoff-gated segment release, and xAI Grok Speech-to-Text per camera feed. It does not include observations, sitreps, or reconstruction generation.
 
 Read [README.MD](./README.MD) and [Bodycam MVP Spec.md](./Bodycam%20MVP%20Spec.md) before extending the system. They define the domain rules and deferred scope.
 
@@ -92,13 +92,14 @@ Each checkout owns its own storage. Do not copy another contributor's `.data` di
 
 The backend stores only media metadata and an internally generated storage key in PostgreSQL. Video bytes are stored outside the database. Never construct a media path from a user-supplied filename; the API already generates opaque keys under its configured media root.
 
-The current PostgreSQL schema has only three tables:
+The current PostgreSQL schema has four tables:
 
 | Table | Stores |
 | --- | --- |
 | `incidents` | Title, user context, creation time, and active playback run |
 | `recordings` | Camera label, validated original filename, duration, start offset, size, and media storage key |
 | `playback_runs` | Run ID, state, backend time anchor, position, and revision for stale-command protection |
+| `transcript_segments` | Per-run, per-recording released window with status, provider text, word timestamps, and error text |
 
 Alembic migrations live in `apps/api/migrations`. Never edit an applied migration. Create a new migration for schema changes and verify it against a new local database before opening a pull request.
 
@@ -117,6 +118,8 @@ Copy `.env.example` to `.env` for local development. `.env` is ignored by Git.
 | `MEDIA_VALIDATION_TIMEOUT_SECONDS` | `120` | `120` | Total FFprobe and FFmpeg validation deadline |
 | `FFMPEG_BINARY` | npm-installed FFmpeg path injected by project scripts | `ffmpeg` | Optional override for FFmpeg |
 | `FFPROBE_BINARY` | npm-installed FFprobe path injected by project scripts | `ffprobe` | Optional override for FFprobe |
+| `XAI_API_KEY` | Empty by default | Passed through from host `.env` | Enables Grok Speech-to-Text; leave empty to disable live transcription |
+| `SEGMENT_SECONDS` | `10` | `10` | Duration of each released transcription window |
 
 Do not commit `.env`, uploaded recordings, local media folders, database folders, credentials, or real incident material. The repository's `.gitignore` excludes these local artifacts.
 
@@ -166,4 +169,19 @@ For native development, stop `npm run dev:db` first, then remove the specific `.
 
 ## Current boundary for contributors
 
-The present milestone ends with durable upload, alignment, and synchronized replay. Keep map-location content, statement reconstruction, sitrep items, event history, evidence review, audio extraction, transcription, workers, queues, and SSE out of contributions unless the scope is explicitly expanded. Analysis panels intentionally use empty states until source-linked processing exists.
+The present milestone ends with durable upload, alignment, synchronized replay, and per-camera live transcription (xAI Grok). Keep map-location content, statement reconstruction, sitrep items, event history, evidence review, observation extraction, Celery/Redis workers, and SSE out of contributions unless the scope is explicitly expanded. Analysis panels intentionally use empty states until source-linked observations exist.
+
+## Attaching the xAI API key
+
+The API calls Grok STT server-side only; the frontend never sees the key.
+
+1. Create a key in the [xAI console](https://console.x.ai/).
+2. Put it in the gitignored project `.env` (or export in your shell for one-off sessions):
+
+```sh
+XAI_API_KEY=xai-...your-key...
+```
+
+3. Docker Compose passes it through automatically. Native `npm run dev:api` picks up whatever is in the environment the shell inherits — set it in your shell or a `.env` loader you already use.
+4. Confirm with `curl http://127.0.0.1:8000/api/health` — `transcription_configured: true` in the response means the API can reach Grok. If it is `false`, transcripts still show queued/empty segments as the pipeline exercises, but no live text will appear.
+5. Do not paste real keys into commits, chat, Playwright fixtures, browser code, `VITE_*` variables, or logs. Rotate the key in the xAI console if that happens.

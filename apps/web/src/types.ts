@@ -14,8 +14,36 @@ export interface Recording {
   size_bytes: number;
   media_url: string;
   validation_status: 'ready';
-  processing_status: 'not_implemented';
-  latest_analyzed_time_seconds: null;
+  processing_status: 'transcribing';
+  latest_analyzed_time_seconds: number | null;
+}
+
+export type TranscriptStatus = 'queued' | 'processing' | 'completed' | 'failed' | 'empty';
+
+export interface TranscriptSegment {
+  id: string;
+  recording_id: string;
+  run_id: string;
+  local_start_seconds: number;
+  local_end_seconds: number;
+  incident_start_seconds: number;
+  incident_end_seconds: number;
+  status: TranscriptStatus;
+  text: string | null;
+  error: string | null;
+}
+
+export interface RecordingTranscript {
+  recording_id: string;
+  latest_analyzed_time_seconds: number | null;
+  segments: TranscriptSegment[];
+}
+
+export interface Transcripts {
+  run_id: string;
+  incident_position_seconds: number;
+  transcription_configured: boolean;
+  recordings: RecordingTranscript[];
 }
 
 export interface Playback {

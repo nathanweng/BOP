@@ -19,7 +19,24 @@ from .database import make_database
 from .media import media_path, stage_upload
 from .models import Incident, PlaybackRun, Recording
 from .playback import playback_view, utc
-from .schemas import IncidentCreate, IncidentSummary, IncidentView, PlaybackCommand, PlaybackView, RecordingUpdate, RecordingView
+from .schemas import (
+    IncidentCreate,
+    IncidentSummary,
+    IncidentView,
+    PlaybackCommand,
+    PlaybackView,
+    RecordingTranscript,
+    RecordingUpdate,
+    RecordingView,
+    TranscriptSegmentView,
+    TranscriptsView,
+)
+from .transcription import (
+    GrokTranscriber,
+    NullTranscriber,
+    Transcriber,
+    TranscriptionService,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,22 +87,51 @@ class UploadBodyLimit:
         await self.app(scope, bounded_receive, bounded_send)
 
 
-def create_app(settings: Settings | None = None, clock=None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    clock=None,
+    *,
+    transcriber: Transcriber | None = None,
+) -> FastAPI:
     settings = settings or Settings.from_env()
     engine, sessions = make_database(settings.database_url)
+    resolved_transcriber: Transcriber
+    if transcriber is not None:
+        resolved_transcriber = transcriber
+    elif settings.xai_api_key:
+        resolved_transcriber = GrokTranscriber(
+            settings.xai_api_key,
+            url=settings.xai_stt_url,
+            language=settings.xai_stt_language,
+            timeout_seconds=settings.xai_stt_timeout_seconds,
+        )
+    else:
+        resolved_transcriber = NullTranscriber()
+    resolved_clock = clock or (lambda: datetime.now(UTC))
+    transcription = TranscriptionService(
+        settings,
+        sessions,
+        resolved_transcriber,
+        clock=lambda: utc(resolved_clock()),
+    )
 
     @asynccontextmanager
     async def lifespan(_app):
         settings.media_root.mkdir(parents=True, exist_ok=True)
-        yield
-        engine.dispose()
+        transcription.start()
+        try:
+            yield
+        finally:
+            transcription.stop()
+            engine.dispose()
 
     app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
     app.add_middleware(UploadBodyLimit, limit=settings.max_upload_bytes + 65_536)
     app.state.engine = engine
     app.state.sessions = sessions
     app.state.settings = settings
-    app.state.clock = clock or (lambda: datetime.now(UTC))
+    app.state.clock = resolved_clock
+    app.state.transcription = transcription
 
     def now():
         return utc(app.state.clock())
@@ -128,21 +174,52 @@ def create_app(settings: Settings | None = None, clock=None) -> FastAPI:
             raise HTTPException(503, "Incident playback state is unavailable")
         return run
 
-    def recording_view(recording: Recording) -> RecordingView:
+    def recording_view(recording: Recording, latest_analyzed: float | None = None) -> RecordingView:
         return RecordingView(
             id=recording.id, original_filename=recording.original_filename,
             camera_label=recording.camera_label, duration_seconds=recording.duration_seconds,
             start_offset_seconds=recording.start_offset_seconds, size_bytes=recording.size_bytes,
             media_url=f"/api/incidents/{recording.incident_id}/recordings/{recording.id}/media",
+            latest_analyzed_time_seconds=latest_analyzed,
         )
 
     def detail(session: Session, incident: Incident) -> IncidentView:
         recordings = recordings_for(session, incident.id)
+        run = current_run(session, incident)
+        latest = transcription.latest_analyzed_by_recording(
+            run_id=run.id,
+            recording_ids=[r.id for r in recordings],
+            session=session,
+        )
         return IncidentView(
             id=incident.id, title=incident.title, context=incident.context,
-            created_at=utc(incident.created_at), recordings=[recording_view(r) for r in recordings],
-            playback=playback_view(current_run(session, incident), recordings, now()),
+            created_at=utc(incident.created_at),
+            recordings=[recording_view(r, latest.get(r.id)) for r in recordings],
+            playback=playback_view(run, recordings, now()),
         )
+
+    def enqueue_transcription(
+        session: Session,
+        run: PlaybackRun,
+        recordings: list[Recording],
+        view: PlaybackView,
+    ) -> None:
+        """Release cutoff-eligible segments to the transcriber.
+
+        Called after playback state is refreshed. Never sends unreleased media
+        to the provider because eligibility is bounded by ``position_seconds``.
+        """
+        if not recordings:
+            return
+        try:
+            transcription.enqueue_eligible(
+                run_id=run.id,
+                incident_position_seconds=view.position_seconds,
+                recordings=recordings,
+                session=session,
+            )
+        except Exception:  # pragma: no cover - defensive, do not fail playback
+            logger.exception("Failed to enqueue transcription segments")
 
     def require_setup(run: PlaybackRun):
         if run.state != "paused" or run.position_seconds != 0:
@@ -158,9 +235,16 @@ def create_app(settings: Settings | None = None, clock=None) -> FastAPI:
             session.rollback()
         media_ready = all(shutil.which(binary) for binary in (settings.ffmpeg_binary, settings.ffprobe_binary))
         storage_ready = settings.media_root.is_dir() and os.access(settings.media_root, os.W_OK)
+        transcription_configured = bool(settings.xai_api_key)
         ready = database_ready and media_ready and storage_ready
         return JSONResponse(
-            {"status": "ready" if ready else "unavailable", "database": database_ready, "media_tools": media_ready, "media_storage": storage_ready},
+            {
+                "status": "ready" if ready else "unavailable",
+                "database": database_ready,
+                "media_tools": media_ready,
+                "media_storage": storage_ready,
+                "transcription_configured": transcription_configured,
+            },
             status_code=200 if ready else 503,
         )
 
@@ -268,8 +352,13 @@ def create_app(settings: Settings | None = None, clock=None) -> FastAPI:
 
     @app.get("/api/incidents/{incident_id}/playback", response_model=PlaybackView)
     def get_playback(incident_id: str, session: Session = Depends(session_dependency)):
-        incident = incident_row(session, incident_id, lock=True)
-        return playback_view(current_run(session, incident), recordings_for(session, incident_id), now())
+        with session.begin():
+            incident = incident_row(session, incident_id, lock=True)
+            run = current_run(session, incident)
+            recordings = recordings_for(session, incident_id)
+            view = playback_view(run, recordings, now())
+            enqueue_transcription(session, run, recordings, view)
+        return view
 
     @app.post("/api/incidents/{incident_id}/playback", response_model=PlaybackView)
     def control_playback(incident_id: str, payload: PlaybackCommand, session: Session = Depends(session_dependency)):
@@ -303,7 +392,49 @@ def create_app(settings: Settings | None = None, clock=None) -> FastAPI:
                 run.revision += 1
             session.flush()
             result = playback_view(run, recordings, timestamp)
+            enqueue_transcription(session, run, recordings, result)
         return result
+
+    @app.get("/api/incidents/{incident_id}/transcripts", response_model=TranscriptsView)
+    def get_transcripts(incident_id: str, session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id, lock=True)
+        run = current_run(session, incident)
+        recordings = recordings_for(session, incident_id)
+        recording_ids = [r.id for r in recordings]
+        view = playback_view(run, recordings, now())
+        segments = transcription.list_for_run(run_id=run.id, recording_ids=recording_ids, session=session)
+        by_recording: dict[str, list[TranscriptSegmentView]] = {rid: [] for rid in recording_ids}
+        for segment in segments:
+            by_recording.setdefault(segment.recording_id, []).append(
+                TranscriptSegmentView(
+                    id=segment.id,
+                    recording_id=segment.recording_id,
+                    run_id=segment.run_id,
+                    local_start_seconds=segment.local_start_seconds,
+                    local_end_seconds=segment.local_end_seconds,
+                    incident_start_seconds=segment.incident_start_seconds,
+                    incident_end_seconds=segment.incident_end_seconds,
+                    status=segment.status,
+                    text=segment.text,
+                    error=segment.error,
+                )
+            )
+        latest = transcription.latest_analyzed_by_recording(
+            run_id=run.id, recording_ids=recording_ids, session=session,
+        )
+        return TranscriptsView(
+            run_id=run.id,
+            incident_position_seconds=view.position_seconds,
+            transcription_configured=bool(settings.xai_api_key),
+            recordings=[
+                RecordingTranscript(
+                    recording_id=rid,
+                    latest_analyzed_time_seconds=latest.get(rid),
+                    segments=by_recording.get(rid, []),
+                )
+                for rid in recording_ids
+            ],
+        )
 
     return app
 

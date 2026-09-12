@@ -5,7 +5,7 @@ import { api, messageFor } from './api';
 import { CameraFeed } from './CameraFeed';
 import { formatTime } from './clock';
 import { useSelection } from './selection';
-import type { Incident, Recording } from './types';
+import type { Incident, Recording, RecordingTranscript } from './types';
 import { useReplay } from './useReplay';
 
 function incidentFromUrl() {
@@ -106,6 +106,19 @@ function Workspace({ incident }: { incident: Incident }) {
   const enoughCameras = incident.recordings.length >= 2;
   const mediaReady = enoughCameras && incident.recordings.every((recording) => readyById[recording.id]);
   const selected = incident.recordings.find((recording) => recording.id === selectedId);
+  const transcripts = useQuery({
+    queryKey: ['transcripts', incident.id],
+    queryFn: ({ signal }) => api.getTranscripts(incident.id, signal),
+    refetchInterval: 1000,
+    retry: false,
+    networkMode: 'always',
+    enabled: incident.recordings.length > 0,
+  });
+  const transcriptsByRecording: Record<string, RecordingTranscript> = {};
+  if (transcripts.data) {
+    for (const entry of transcripts.data.recordings) transcriptsByRecording[entry.recording_id] = entry;
+  }
+  const transcriptionConfigured = transcripts.data?.transcription_configured ?? false;
 
   const saved = useCallback(async () => {
     await Promise.all([
@@ -164,13 +177,15 @@ function Workspace({ incident }: { incident: Incident }) {
             selected={selectedId === recording.id}
             audioEnabled={audioEnabled}
             runId={replay.playback.run_id}
+            transcript={transcriptsByRecording[recording.id]}
+            transcriptConfigured={transcriptionConfigured}
             onSelect={() => select(incident.id, recording.id)}
             onProblem={replay.halt}
             onReady={onReady}
           />)}
         </div>
       </div>
-      <p className="muted">Processing not implemented. Latest analyzed time is unavailable for every camera.</p>
+      {!transcriptionConfigured && incident.recordings.length > 0 && <p className="muted">Live Grok transcription is not configured. Set XAI_API_KEY on the API to enable per-camera transcripts. Segment release still works so the pipeline stays visible.</p>}
     </section>
 
     <section className="panel" aria-labelledby="reconstruction-heading" data-testid="reconstruction-empty-state">

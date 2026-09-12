@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Float, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -56,3 +56,40 @@ class Recording(Base):
     start_offset_seconds: Mapped[float] = mapped_column(Float, default=0)
     size_bytes: Mapped[int] = mapped_column(BigInteger)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TranscriptSegment(Base):
+    __tablename__ = "transcript_segments"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'completed', 'failed', 'empty')",
+            name="ck_transcript_status",
+        ),
+        CheckConstraint(
+            "local_end_seconds > local_start_seconds",
+            name="ck_transcript_window_positive",
+        ),
+        UniqueConstraint(
+            "run_id", "recording_id", "local_start_seconds", "local_end_seconds",
+            name="uq_transcript_run_recording_window",
+        ),
+        Index(
+            "ix_transcript_run_recording",
+            "run_id", "recording_id", "incident_start_seconds",
+        ),
+        Index("ix_transcript_status_created", "status", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("playback_runs.id"), index=True)
+    recording_id: Mapped[str] = mapped_column(ForeignKey("recordings.id"), index=True)
+    local_start_seconds: Mapped[float] = mapped_column(Float)
+    local_end_seconds: Mapped[float] = mapped_column(Float)
+    incident_start_seconds: Mapped[float] = mapped_column(Float)
+    incident_end_seconds: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    words_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

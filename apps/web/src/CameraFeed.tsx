@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { formatTime, recordingPosition } from './clock';
-import type { Recording } from './types';
+import type { RecordingTranscript, Recording, TranscriptSegment } from './types';
 
 interface Props {
   recording: Recording;
@@ -9,12 +9,14 @@ interface Props {
   selected: boolean;
   audioEnabled: boolean;
   runId: string;
+  transcript?: RecordingTranscript;
+  transcriptConfigured: boolean;
   onSelect: () => void;
   onProblem: (message: string) => void;
   onReady: (id: string, ready: boolean) => void;
 }
 
-export function CameraFeed({ recording, incidentTime, playing, selected, audioEnabled, runId, onSelect, onProblem, onReady }: Props) {
+export function CameraFeed({ recording, incidentTime, playing, selected, audioEnabled, runId, transcript, transcriptConfigured, onSelect, onProblem, onReady }: Props) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const playPending = useRef(false);
   const syncRef = useRef<() => void>(() => undefined);
@@ -132,10 +134,85 @@ export function CameraFeed({ recording, incidentTime, playing, selected, audioEn
       </div>
       <div className="feed-metadata">
         <span>Recording {formatTime(position.seconds)} / {formatTime(recording.duration_seconds)}</span>
-        <span>Latest analyzed: unavailable</span>
+        <span data-testid={`feed-analyzed-${recording.id}`}>Latest analyzed: {transcript?.latest_analyzed_time_seconds != null ? formatTime(transcript.latest_analyzed_time_seconds) : '—'}</span>
         <span>Location: unknown</span>
       </div>
       {mediaError && <div className="feed-error"><p role="alert">{mediaError}</p><button type="button" onClick={retryMedia} disabled={playing}>Reload media</button></div>}
+      <TranscriptPanel recordingLabel={recording.camera_label} transcript={transcript} transcriptConfigured={transcriptConfigured} recordingId={recording.id} />
     </article>
   );
+}
+
+interface TranscriptPanelProps {
+  recordingId: string;
+  recordingLabel: string;
+  transcript: RecordingTranscript | undefined;
+  transcriptConfigured: boolean;
+}
+
+function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptConfigured }: TranscriptPanelProps) {
+  const segments = transcript?.segments ?? [];
+  const inFlight = segments.filter((segment) => segment.status === 'queued' || segment.status === 'processing').length;
+  const completed = segments.filter((segment) => segment.status === 'completed');
+  const failed = segments.filter((segment) => segment.status === 'failed');
+  const empty = segments.filter((segment) => segment.status === 'empty').length;
+  return (
+    <section className="feed-transcript" aria-label={`Live transcript for ${recordingLabel}`}>
+      <header className="transcript-heading">
+        <span>Live transcript</span>
+        <TranscriptStatusBadge inFlight={inFlight} completedCount={completed.length} emptyCount={empty} failedCount={failed.length} configured={transcriptConfigured} />
+      </header>
+      <ol className="transcript-cues" data-testid={`feed-transcript-${recordingId}`}>
+        {completed.length === 0 && failed.length === 0 && empty === 0 && (
+          <li className="transcript-placeholder">
+            {transcriptConfigured
+              ? 'Speech transcribed here as the shared clock releases each segment.'
+              : 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'}
+          </li>
+        )}
+        {segments.map((segment) => <TranscriptCue key={segment.id} segment={segment} />)}
+      </ol>
+    </section>
+  );
+}
+
+function TranscriptCue({ segment }: { segment: TranscriptSegment }) {
+  if (segment.status === 'completed') {
+    return (
+      <li className="transcript-cue completed">
+        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+        <p>{segment.text}</p>
+      </li>
+    );
+  }
+  if (segment.status === 'empty') {
+    return (
+      <li className="transcript-cue muted">
+        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+        <p className="muted">No speech detected.</p>
+      </li>
+    );
+  }
+  if (segment.status === 'failed') {
+    return (
+      <li className="transcript-cue failed">
+        <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+        <p role="alert">Transcription failed. {segment.error ?? ''}</p>
+      </li>
+    );
+  }
+  return (
+    <li className="transcript-cue pending">
+      <time className="cue-time">{formatTime(segment.incident_start_seconds)} – {formatTime(segment.incident_end_seconds)}</time>
+      <p className="muted">{segment.status === 'processing' ? 'Transcribing…' : 'Waiting for transcription…'}</p>
+    </li>
+  );
+}
+
+function TranscriptStatusBadge({ inFlight, completedCount, emptyCount, failedCount, configured }: { inFlight: number; completedCount: number; emptyCount: number; failedCount: number; configured: boolean }) {
+  if (!configured) return <span className="transcript-status">Not configured</span>;
+  if (inFlight > 0) return <span className="transcript-status pending">Transcribing {inFlight} segment{inFlight === 1 ? '' : 's'}…</span>;
+  if (failedCount > 0) return <span className="transcript-status failed">{failedCount} failed</span>;
+  if (completedCount === 0 && emptyCount === 0) return <span className="transcript-status">Idle</span>;
+  return <span className="transcript-status">Up to date</span>;
 }

@@ -31,7 +31,7 @@ def test_create_validation_and_empty_processing(client, incident):
 def test_media_round_trip_range_and_incident_isolation(client, prepared, media_fixture):
     recording = prepared["recordings"][0]
     assert recording["validation_status"] == "ready"
-    assert recording["processing_status"] == "not_implemented"
+    assert recording["processing_status"] == "transcribing"
     assert recording["latest_analyzed_time_seconds"] is None
     assert recording["size_bytes"] == len(media_fixture)
     assert recording["duration_seconds"] == pytest.approx(3, abs=0.2)
