@@ -1,0 +1,290 @@
+"""Completed-transcript knowledge graphs, with durable builds and source provenance."""
+from datetime import timedelta
+import hashlib
+import json
+import logging
+from threading import Event, Thread
+from urllib.request import Request
+from uuid import uuid4
+
+from fastapi import HTTPException
+from sqlalchemy import select, update, or_
+
+from .events import _provider_response, _message_text, EventProviderError
+from .models import (Incident, PlaybackRun, Recording, TranscriptSegment, KnowledgeVersion,
+                     KnowledgeObservation, KnowledgeItem, KnowledgeSupport)
+from .playback import playback_view
+from .transcription import eligible_windows
+
+logger = logging.getLogger(__name__)
+NODE_KINDS = {'person', 'responder', 'location', 'object', 'event', 'claim', 'question', 'recording'}
+EDGE_KINDS = {'stated_by', 'captured_by', 'supports', 'mentions', 'occurred_at', 'before', 'after',
+              'updates', 'involves', 'located_at', 'moved_to', 'associated_with', 'corroborates',
+              'duplicates_capture_of', 'disputes', 'contradicts', 'answers', 'raises_question', 'possible_same_as'}
+
+
+def object_schema(properties):
+    return {'type': 'object', 'additionalProperties': False, 'required': list(properties), 'properties': properties}
+
+
+STRING = {'type': 'string'}
+REFS = {'type': 'array', 'items': STRING}
+ITEM = {'id': STRING, 'kind': STRING, 'label': STRING, 'description': STRING,
+        'uncertainty': STRING, 'observation_ids': REFS}
+SCHEMA = object_schema({
+    'observations': {'type': 'array', 'items': object_schema({
+        'id': STRING, 'segment_id': STRING, 'text': STRING, 'attribution': STRING})},
+    'nodes': {'type': 'array', 'items': object_schema({**ITEM, 'kind': {'type': 'string', 'enum': sorted(NODE_KINDS)}})},
+    'edges': {'type': 'array', 'items': object_schema({**ITEM, 'kind': {'type': 'string', 'enum': sorted(EDGE_KINDS)},
+                                                    'source': STRING, 'target': STRING})},
+})
+
+
+def validate_chunk(data, sources, known_nodes):
+    """Reject unsupported graph claims atomically; no invented citation IDs."""
+    if not isinstance(data, dict) or any(not isinstance(data.get(k), list) for k in ('observations', 'nodes', 'edges')):
+        raise ValueError('Invalid graph response')
+    observations = {}
+    for obs in data['observations']:
+        if (not isinstance(obs, dict) or not all(isinstance(obs.get(k), str) and obs[k].strip()
+                for k in ('id', 'segment_id', 'text', 'attribution')) or obs['segment_id'] not in sources
+                or obs['id'] in observations or len(obs['attribution']) > 200):
+            raise ValueError('Invalid observation citation')
+        observations[obs['id']] = obs
+    nodes = set(known_nodes)
+    keys = set()
+    for item in data['nodes'] + data['edges']:
+        edge = 'source' in item
+        if (not all(isinstance(item.get(k), str) for k in ('id', 'kind', 'label', 'description', 'uncertainty'))
+                or not item['label'].strip() or not item['id'] or len(item['id']) > 90
+                or len(item['label']) > 200 or len(item['uncertainty']) > 400
+                or item['id'] in keys or item['id'] in known_nodes
+                or item['kind'] not in (EDGE_KINDS if edge else NODE_KINDS)
+                or not isinstance(item.get('observation_ids'), list) or not item['observation_ids']
+                or any(ref not in observations for ref in item['observation_ids'])):
+            raise ValueError('Invalid graph item or provenance')
+        keys.add(item['id'])
+        if not edge:
+            nodes.add(item['id'])
+    for edge in data['edges']:
+        if edge.get('source') not in nodes or edge.get('target') not in nodes or edge['source'] == edge['target']:
+            raise ValueError('Invalid relationship endpoints')
+    return data
+
+
+def generate_knowledge(settings, sources):
+    graph = {'observations': [], 'nodes': [], 'edges': []}
+    # Process every source in bounded batches; previous entities provide explicit reuse IDs.
+    for start in range(0, len(sources), 12):
+        batch = sources[start:start + 12]
+        prefix = f'b{start}_'
+        request = Request('https://openrouter.ai/api/v1/chat/completions', headers={
+            'Authorization': f'Bearer {settings.openrouter_api_key}', 'Content-Type': 'application/json',
+        }, data=json.dumps({
+            'model': settings.openrouter_model, 'temperature': 0.2, 'max_tokens': 16000,
+            'response_format': {'type': 'json_schema', 'json_schema': {
+                'name': 'knowledge_graph', 'strict': True, 'schema': SCHEMA}},
+            'provider': {'require_parameters': True},
+            'messages': [{'role': 'system', 'content': (
+                'Build a high-level incident knowledge map from transcript evidence, not an event list. '
+                'Extract atomic attributed observations first, then synthesize people/roles, police/responders, '
+                'places, objects/vehicles, major developments, material claims and unresolved questions. '
+                'Prefer a small connected summary; do not turn each sentence or timestamp into a node. '
+                'Represent reported statements as reports, never established truth. Every node and edge must '
+                'cite observation_ids from this batch, each observation cites an exact segment_id. '
+                'Use previous node IDs as edge endpoints where explicitly the same entity; do not re-emit previous nodes. '
+                'Never merge anonymous people across cameras or treat a camera label as a speaker. '
+                'Unknown people must be recording-scoped and identities qualified. No invented names, police roles, '
+                'guilt, intent, or tactical recommendations. Explicitly distinguish uncertainty from contradiction. '
+                'Use possible_same_as for uncertain identity, uncertainty text for tentative relationships. '
+                'For changes use later claim -> earlier claim edges: updates, disputes, or contradicts; '
+                'Use contradicts for mutually exclusive accounts of the same detail, including explicit corrections '
+                '(for example, the same reported object was a phone, not a knife). Use updates for compatible '
+                'new detail or changed circumstances, and disputes for unresolved conflicting testimony. '
+                'do not erase the earlier claim or call anyone a liar. Questions must cite what raises them. '
+                f'Node kinds: {sorted(NODE_KINDS)}. Edge kinds: {sorted(EDGE_KINDS)}. '
+                f'All new IDs must start with {prefix}. Labels <=200 chars, uncertainty <=400 chars. '
+                'Return observations, nodes, edges; empty arrays are allowed for no substantive evidence.'
+            )}, {'role': 'user', 'content': json.dumps({
+                'sources': batch, 'previous_nodes': graph['nodes']})}],
+        }).encode())
+        result = _provider_response(request)
+        chunk = validate_chunk(json.loads(_message_text(result['choices'][0]['message'])),
+                               {s['segment_id'] for s in batch}, {n['id'] for n in graph['nodes']})
+        existing_ids = {item['id'] for values in graph.values() for item in values}
+        new_ids = [item['id'] for values in chunk.values() for item in values]
+        if any(not key.startswith(prefix) or key in existing_ids for key in new_ids) or len(new_ids) != len(set(new_ids)):
+            raise ValueError('Duplicate graph IDs')
+        for key in graph:
+            graph[key].extend(chunk[key])
+    return graph
+
+
+class KnowledgeService:
+    def __init__(self, settings, sessions, clock, generator=generate_knowledge):
+        self.settings, self.sessions, self.clock, self.generator = settings, sessions, clock, generator
+        self.halt = Event()
+        self.thread = None
+
+    def start(self):
+        if self.settings.event_worker_interval_seconds > 0:
+            self.thread = Thread(target=self._loop, daemon=True)
+            self.thread.start()
+
+    def stop(self):
+        self.halt.set()
+        if self.thread:
+            self.thread.join(timeout=2)
+
+    def _loop(self):
+        while not self.halt.wait(2):
+            try:
+                with self.sessions() as session:
+                    ids = list(session.scalars(select(KnowledgeVersion.id).where(or_(
+                        KnowledgeVersion.status == 'queued',
+                        (KnowledgeVersion.status == 'processing') & (KnowledgeVersion.lease_until < self.clock())))))
+                for version_id in ids:
+                    if self.halt.is_set():
+                        break
+                    self.process(version_id)
+            except Exception:
+                logger.exception('Knowledge map worker failed')
+
+    def inputs(self, session, incident, run):
+        recordings = list(session.scalars(select(Recording).where(Recording.incident_id == incident.id).order_by(Recording.id)))
+        segments = list(session.scalars(select(TranscriptSegment).where(TranscriptSegment.run_id == run.id)
+                                        .order_by(TranscriptSegment.incident_start_seconds, TranscriptSegment.id)))
+        lookup = {(s.recording_id, round(s.local_start_seconds, 6), round(s.local_end_seconds, 6)): s for s in segments}
+        complete, expected, failed = 0, 0, 0
+        selected = []
+        for recording in recordings:
+            for window in eligible_windows(incident_position_seconds=recording.start_offset_seconds + recording.duration_seconds,
+                    start_offset_seconds=recording.start_offset_seconds, duration_seconds=recording.duration_seconds,
+                    segment_seconds=self.settings.transcription_segment_seconds):
+                expected += 1
+                segment = lookup.get((recording.id, window.local_start, window.local_end))
+                if segment and segment.status in ('completed', 'empty'):
+                    complete += 1
+                    selected.append(segment)
+                elif segment and segment.status == 'failed':
+                    failed += 1
+        labels = {r.id: r.camera_label for r in recordings}
+        sources = [{'segment_id': s.id, 'recording_id': s.recording_id, 'camera_label': labels[s.recording_id],
+                    'incident_start': s.incident_start_seconds, 'incident_end': s.incident_end_seconds,
+                    'text': s.text} for s in sorted(selected, key=lambda s: (s.incident_start_seconds, s.id))
+                   if s.status == 'completed' and s.text and s.text.strip()]
+        digest = hashlib.sha256(json.dumps({'schema': 1, 'model': self.settings.openrouter_model,
+            'sources': sources, 'recordings': [(r.id, r.camera_label, r.start_offset_seconds, r.duration_seconds) for r in recordings],
+            'windows': [(s.id, s.status) for s in selected]}, sort_keys=True).encode()).hexdigest()
+        ended = playback_view(run, recordings, self.clock()).state == 'ended'
+        ready = bool(expected and complete == expected and ended and self.settings.openrouter_api_key)
+        reason = ('Add recordings to begin.' if not expected else 'Wait until playback ends.' if not ended else
+                  f'Waiting for transcripts: {complete}/{expected} complete; {failed} failed.' if complete != expected else
+                  'Set OPENROUTER_API_KEY in .env and restart the API.' if not self.settings.openrouter_api_key else '')
+        return {'ready': ready, 'reason': reason, 'completed': complete, 'expected': expected, 'failed': failed}, sources, digest
+
+    def enqueue(self, session, incident, run):
+        readiness, _, digest = self.inputs(session, incident, run)
+        if not readiness['ready']:
+            raise HTTPException(409, readiness['reason'])
+        version = session.scalar(select(KnowledgeVersion).where(KnowledgeVersion.run_id == run.id, KnowledgeVersion.input_hash == digest))
+        if version is None:
+            version = KnowledgeVersion(id=str(uuid4()), run_id=run.id, input_hash=digest, status='queued',
+                                       model=self.settings.openrouter_model, created_at=self.clock())
+            session.add(version)
+        elif version.status == 'failed':
+            version.status, version.error = 'queued', None
+        session.commit()
+        return {'id': version.id, 'status': version.status}
+
+    def process(self, version_id):
+        token = str(uuid4())
+        with self.sessions() as session:
+            claimed = session.execute(update(KnowledgeVersion).where(KnowledgeVersion.id == version_id, or_(
+                KnowledgeVersion.status == 'queued', (KnowledgeVersion.status == 'processing') &
+                (KnowledgeVersion.lease_until < self.clock()))).values(status='processing', lease_token=token,
+                    lease_until=self.clock() + timedelta(hours=2))).rowcount
+            session.commit()
+            if not claimed:
+                return
+            version = session.get(KnowledgeVersion, version_id)
+            run = session.get(PlaybackRun, version.run_id)
+            incident = session.get(Incident, run.incident_id)
+            _, sources, digest = self.inputs(session, incident, run)
+            revision = run.revision
+        try:
+            graph = self.generator(self.settings, sources)
+            with self.sessions() as session:
+                # Same incident lock as playback controls: restart cannot race graph publication.
+                incident = session.scalar(select(Incident).where(Incident.id == incident.id).with_for_update())
+                run = session.get(PlaybackRun, run.id)
+                version = session.get(KnowledgeVersion, version_id)
+                _, _, fresh_digest = self.inputs(session, incident, run)
+                if version.lease_token != token:
+                    return
+                if incident.active_run_id != run.id or run.revision != revision or fresh_digest != digest or digest != version.input_hash:
+                    raise ValueError('Graph inputs changed during build; retry on the current run.')
+                observation_ids = {}
+                for obs in graph['observations']:
+                    oid = str(uuid4())
+                    observation_ids[obs['id']] = oid
+                    session.add(KnowledgeObservation(id=oid, version_id=version_id, segment_id=obs['segment_id'],
+                                                     text=obs['text'], attribution=obs['attribution']))
+                session.flush()
+                for item in graph['nodes'] + graph['edges']:
+                    iid = str(uuid4())
+                    session.add(KnowledgeItem(id=iid, version_id=version_id, item_key=item['id'], kind=item['kind'],
+                        label=item['label'], description=item['description'], uncertainty=item['uncertainty'],
+                        source_key=item.get('source'), target_key=item.get('target')))
+                    session.flush()
+                    for ref in set(item['observation_ids']):
+                        session.add(KnowledgeSupport(item_id=iid, observation_id=observation_ids[ref]))
+                version.status, version.error, version.lease_until = 'completed', None, None
+                session.commit()
+        except Exception as exc:
+            logger.warning('Knowledge map build failed: %s', type(exc).__name__)
+            with self.sessions() as session:
+                session.execute(update(KnowledgeVersion).where(KnowledgeVersion.id == version_id,
+                    KnowledgeVersion.lease_token == token).values(status='failed', lease_until=None,
+                    error=str(exc)[:500] if isinstance(exc, EventProviderError) else
+                    'Map build failed validation or its inputs changed. Saved maps are retained. Retry the build.'))
+                session.commit()
+
+    def view(self, session, incident, run, cutoff=None):
+        readiness, _, digest = self.inputs(session, incident, run)
+        versions = list(session.scalars(select(KnowledgeVersion).where(KnowledgeVersion.run_id == run.id)
+                                       .order_by(KnowledgeVersion.created_at.desc())))
+        latest = versions[0] if versions else None
+        valid = next((v for v in versions if v.status == 'completed'), None)
+        result = {'run_id': run.id, **readiness, 'state': latest.status if latest else 'not_built',
+                  'error': latest.error if latest else None, 'version_id': valid.id if valid else None,
+                  'stale': bool(valid and valid.input_hash != digest), 'nodes': [], 'edges': []}
+        if not valid:
+            return result
+        observations = {o.id: o for o in session.scalars(select(KnowledgeObservation).where(KnowledgeObservation.version_id == valid.id))}
+        segments = {s.id: s for s in session.scalars(select(TranscriptSegment).where(TranscriptSegment.run_id == run.id))}
+        items = list(session.scalars(select(KnowledgeItem).where(KnowledgeItem.version_id == valid.id)))
+        supports = {}
+        for support in session.scalars(select(KnowledgeSupport).join(KnowledgeItem).where(KnowledgeItem.version_id == valid.id)):
+            supports.setdefault(support.item_id, []).append(observations[support.observation_id])
+        for item in items:
+            evidence = supports.get(item.id, [])
+            # Conservative cutoff: a label is visible only after ALL its source material is available.
+            if not evidence or any(cutoff is not None and segments[o.segment_id].incident_end_seconds > cutoff for o in evidence):
+                continue
+            citations = []
+            for obs in evidence:
+                segment = segments[obs.segment_id]
+                citations.append({'id': obs.id, 'segment_id': segment.id, 'recording_id': segment.recording_id,
+                    'observation': obs.text, 'attribution': obs.attribution, 'text': segment.text,
+                    'local_start': segment.local_start_seconds, 'local_end': segment.local_end_seconds,
+                    'incident_start': segment.incident_start_seconds, 'incident_end': segment.incident_end_seconds})
+            result['edges' if item.source_key else 'nodes'].append({'id': item.item_key, 'kind': item.kind,
+                'label': item.label, 'description': item.description, 'uncertainty': item.uncertainty,
+                'source': item.source_key, 'target': item.target_key, 'status': 'active', 'citations': citations})
+        node_ids = {n['id'] for n in result['nodes']}
+        result['edges'] = [e for e in result['edges'] if e['source'] in node_ids and e['target'] in node_ids]
+        for node in result['nodes']:
+            kinds = {e['kind'] for e in result['edges'] if e['target'] == node['id']}
+            node['status'] = 'contradicted' if 'contradicts' in kinds else 'disputed' if 'disputes' in kinds else 'superseded' if 'updates' in kinds else 'active'
+        return result

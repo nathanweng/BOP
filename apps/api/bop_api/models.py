@@ -106,3 +106,46 @@ class EventHistory(Base):
     retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class KnowledgeVersion(Base):
+    __tablename__ = "knowledge_versions"
+    __table_args__ = (UniqueConstraint("run_id", "input_hash", name="uq_knowledge_input"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("playback_runs.id"), index=True)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    model: Mapped[str] = mapped_column(String(100))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
+
+class KnowledgeObservation(Base):
+    __tablename__ = "knowledge_observations"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("knowledge_versions.id"), index=True)
+    segment_id: Mapped[str] = mapped_column(ForeignKey("transcript_segments.id"))
+    text: Mapped[str] = mapped_column(Text)
+    attribution: Mapped[str] = mapped_column(String(200))
+
+
+class KnowledgeItem(Base):
+    __tablename__ = "knowledge_items"
+    __table_args__ = (UniqueConstraint("version_id", "item_key", name="uq_knowledge_item"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    version_id: Mapped[str] = mapped_column(ForeignKey("knowledge_versions.id"), index=True)
+    item_key: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(32))
+    label: Mapped[str] = mapped_column(String(200))
+    description: Mapped[str] = mapped_column(Text)
+    uncertainty: Mapped[str] = mapped_column(String(400))
+    source_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    target_key: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+class KnowledgeSupport(Base):
+    __tablename__ = "knowledge_supports"
+    item_id: Mapped[str] = mapped_column(ForeignKey("knowledge_items.id"), primary_key=True)
+    observation_id: Mapped[str] = mapped_column(ForeignKey("knowledge_observations.id"), primary_key=True)

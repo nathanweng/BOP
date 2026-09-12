@@ -23,11 +23,15 @@ test('history polls automatically, colors corrections, and shows evidence times'
     ];
     const body = path.endsWith('/events') ? { run_id: playback.run_id, configured: true,
       model: 'test', state: 'idle', pending_segments: 0, processed_segments: corrected ? 3 : 1, error: null, events }
+      : path.endsWith('/knowledge') ? { run_id: playback.run_id, ready: false, reason: 'Wait until playback ends.',
+        completed: 0, expected: 0, failed: 0, state: 'not_built', stale: false, nodes: [], edges: [] }
       : path.endsWith('/playback') ? playback : path === '/api/incidents' ? [incident] : incident;
     await route.fulfill({ json: body });
   });
   await page.goto('/?incident=history-ui');
   const table = page.locator('.event-history');
+  await expect(page.getByRole('region', { name: 'Incident map', exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open mind map' })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Current facts' })).toBeVisible();
   await expect(table.getByRole('button', { name: /Review source at/ })).toHaveCount(2);
   await expect(table.locator('.event-disproven')).toHaveCount(0);

@@ -278,7 +278,12 @@ function Workspace({ incident }: { incident: Incident }) {
     />}
 
     <section className="panel main-stage" aria-labelledby="stage-heading">
-      <div className="section-heading"><h2 id="stage-heading">Incident map and body-camera view</h2><span className="status">Simulated replay</span></div>
+      <div className="section-heading"><h2 id="stage-heading">Incident map and body-camera view</h2>
+        <a href={`?incident=${encodeURIComponent(incident.id)}&view=mindmap`} target={`mindmap-${incident.id}`}
+          onClick={(event) => {
+            const popup = window.open(event.currentTarget.href, `mindmap-${incident.id}`, 'popup,width=1500,height=950,resizable=yes,scrollbars=yes');
+            if (popup) { event.preventDefault(); popup.focus(); }
+          }}>Open mind map ↗</a><span className="status">Simulated replay</span></div>
       <div className="stage-grid">
         <div className="map-context" role="region" aria-label="Incident map">
           <h3>Incident map</h3><p>No supported location data for this incident.</p><p className="muted">Camera locations are unknown.</p>

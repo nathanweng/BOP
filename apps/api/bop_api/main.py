@@ -7,7 +7,7 @@ from pathlib import Path
 import shutil
 from uuid import uuid4
 
-from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from sqlalchemy import select, text
@@ -20,6 +20,7 @@ from .database import make_database
 from .media import media_path, stage_upload
 from .models import Incident, PlaybackRun, Recording
 from .event_service import EventService
+from .knowledge import KnowledgeService
 from .playback import playback_view, utc
 from .schemas import (
     IncidentCreate,
@@ -148,17 +149,20 @@ def create_app(
         clock=lambda: utc(resolved_clock()),
     )
     events_service = EventService(settings, sessions, lambda: utc(resolved_clock()))
+    knowledge_service = KnowledgeService(settings, sessions, lambda: utc(resolved_clock()))
 
     @asynccontextmanager
     async def lifespan(_app):
         settings.media_root.mkdir(parents=True, exist_ok=True)
         transcription.start()
         events_service.start()
+        knowledge_service.start()
         try:
             yield
         finally:
             transcription.stop()
             events_service.stop()
+            knowledge_service.stop()
             engine.dispose()
 
     app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
@@ -169,6 +173,7 @@ def create_app(
     app.state.clock = resolved_clock
     app.state.transcription = transcription
     app.state.events = events_service
+    app.state.knowledge = knowledge_service
 
     def now():
         return utc(app.state.clock())
@@ -497,6 +502,17 @@ def create_app(
         events_service.process_incident(incident_id)
         incident = incident_row(session, incident_id)
         return events_service.view(session, incident, current_run(session, incident))
+
+    @app.get("/api/incidents/{incident_id}/knowledge")
+    def get_knowledge(incident_id: str, cutoff_seconds: float | None = Query(None, ge=0, allow_inf_nan=False),
+                      session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id)
+        return knowledge_service.view(session, incident, current_run(session, incident), cutoff_seconds)
+
+    @app.post("/api/incidents/{incident_id}/knowledge", status_code=202)
+    def build_knowledge(incident_id: str, session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id, lock=True)
+        return knowledge_service.enqueue(session, incident, current_run(session, incident))
 
     return app
 
