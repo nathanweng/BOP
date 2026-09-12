@@ -252,11 +252,6 @@ function Workspace({ incident }: { incident: Incident }) {
             if (popup) { event.preventDefault(); popup.focus(); }
           }}>Open mind map ↗</a><button className="expand-stage" aria-expanded={stageExpanded} onClick={() => transition(() => setStageExpanded((expanded) => !expanded))}>{stageExpanded ? 'Exit expanded view' : 'Expand view'} <Icon name="target" /></button><span className="stage-source-count">{incident.recordings.length} {incident.recordings.length === 1 ? 'source' : 'sources'}</span></div>
       <div className="stage-grid">
-        <div className="map-context" role="region" aria-label="Incident map">
-          <div className="map-panel-heading"><span>Location</span></div>
-          <div className="map-unavailable"><Icon name="target" /><h3>No location data</h3><p>No supported location data for this incident.</p></div>
-          <div className="map-footer">{selected ? `Selected source: ${selected.camera_label}` : 'Awaiting source recordings'}</div>
-        </div>
         <div className="camera-stack">
           {incident.recordings.length === 0 && <div className="empty-state"><h3>No recordings uploaded</h3><p>Upload an MP4 recording to display a camera feed.</p></div>}
           {incident.recordings.map((recording) => <CameraFeed

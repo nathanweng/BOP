@@ -34,8 +34,7 @@ test('knowledge map shows people and connections, filters future statements and 
     await route.fulfill({ json: body });
   });
   await page.goto('/?incident=knowledge-ui');
-  await expect(page.getByRole('region', { name: 'Incident map', exact: true })).toBeVisible();
-  await expect(page.getByText('No supported location data for this incident.')).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Incident map', exact: true })).toHaveCount(0);
   const opened = page.waitForEvent('popup');
   await page.getByRole('link', { name: 'Open mind map' }).click();
   const mapWindow = await opened;

@@ -103,42 +103,44 @@ export function CameraFeed({ recording, incidentTime, playing, selected, audioEn
 
   return (
     <article className={`camera-feed${selected ? ' selected' : ''}`} data-testid={`camera-feed-${recording.id}`}>
-      <div className="feed-heading">
-        <button type="button" className="select-feed" onClick={onSelect} aria-label={`Select ${recording.camera_label}`} aria-pressed={selected}>
-          {recording.camera_label}{selected ? ' · Selected' : ''}
-        </button>
-        <span className="status" data-testid={`feed-status-${recording.id}`}>{status}</span>
+      <div className="feed-stage">
+        <div className="feed-heading">
+          <button type="button" className="select-feed" onClick={onSelect} aria-label={`Select ${recording.camera_label}`} aria-pressed={selected}>
+            {recording.camera_label}{selected ? ' · Selected' : ''}
+          </button>
+          <span className="status" data-testid={`feed-status-${recording.id}`}>{status}</span>
+        </div>
+        <div className="video-frame">
+          <video
+            ref={videoRef}
+            src={recording.media_url}
+            preload="auto"
+            playsInline
+            muted={!audioEnabled || !selected}
+            controls={false}
+            disablePictureInPicture
+            aria-label={`${recording.camera_label} synchronized recording`}
+            className={position.state === 'waiting' ? 'unreleased' : ''}
+            onLoadedMetadata={() => syncRef.current()}
+            onCanPlay={handleReady}
+            onSeeked={() => syncRef.current()}
+            onWaiting={handleWaiting}
+            onStalled={handleWaiting}
+            onError={() => {
+              const code = videoRef.current?.error?.code;
+              reportProblem(`${recording.camera_label}: the browser could not read this recording${code ? ` (media error ${code})` : ''}. Check the API connection and try reloading the media.`);
+            }}
+          />
+          {position.state === 'waiting' && <div className="video-overlay">Starts at incident {formatTime(recording.start_offset_seconds)}</div>}
+          {position.state === 'ended' && <span className="ended-label">Recording ended</span>}
+        </div>
+        <div className="feed-metadata">
+          <span>Recording {formatTime(position.seconds)} / {formatTime(recording.duration_seconds)}</span>
+          <span data-testid={`feed-analyzed-${recording.id}`}>Latest analyzed: {transcript?.latest_analyzed_time_seconds != null ? formatTime(transcript.latest_analyzed_time_seconds) : '—'}</span>
+          <span>Location: unknown</span>
+        </div>
+        {mediaError && <div className="feed-error"><p role="alert">{mediaError}</p><button type="button" onClick={retryMedia} disabled={playing}>Reload media</button></div>}
       </div>
-      <div className="video-frame">
-        <video
-          ref={videoRef}
-          src={recording.media_url}
-          preload="auto"
-          playsInline
-          muted={!audioEnabled || !selected}
-          controls={false}
-          disablePictureInPicture
-          aria-label={`${recording.camera_label} synchronized recording`}
-          className={position.state === 'waiting' ? 'unreleased' : ''}
-          onLoadedMetadata={() => syncRef.current()}
-          onCanPlay={handleReady}
-          onSeeked={() => syncRef.current()}
-          onWaiting={handleWaiting}
-          onStalled={handleWaiting}
-          onError={() => {
-            const code = videoRef.current?.error?.code;
-            reportProblem(`${recording.camera_label}: the browser could not read this recording${code ? ` (media error ${code})` : ''}. Check the API connection and try reloading the media.`);
-          }}
-        />
-        {position.state === 'waiting' && <div className="video-overlay">Starts at incident {formatTime(recording.start_offset_seconds)}</div>}
-        {position.state === 'ended' && <span className="ended-label">Recording ended</span>}
-      </div>
-      <div className="feed-metadata">
-        <span>Recording {formatTime(position.seconds)} / {formatTime(recording.duration_seconds)}</span>
-        <span data-testid={`feed-analyzed-${recording.id}`}>Latest analyzed: {transcript?.latest_analyzed_time_seconds != null ? formatTime(transcript.latest_analyzed_time_seconds) : '—'}</span>
-        <span>Location: unknown</span>
-      </div>
-      {mediaError && <div className="feed-error"><p role="alert">{mediaError}</p><button type="button" onClick={retryMedia} disabled={playing}>Reload media</button></div>}
       <TranscriptPanel recordingLabel={recording.camera_label} transcript={transcript} transcriptConfigured={transcriptConfigured} recordingId={recording.id} cutoffSeconds={transcriptCutoffSeconds} />
     </article>
   );
@@ -150,14 +152,6 @@ interface TranscriptPanelProps {
   transcript: RecordingTranscript | undefined;
   transcriptConfigured: boolean;
   cutoffSeconds: number;
-}
-
-function latestCompletedSegment(segments: TranscriptSegment[]): TranscriptSegment | null {
-  for (let index = segments.length - 1; index >= 0; index -= 1) {
-    const segment = segments[index];
-    if (segment.status === 'completed' && segment.text?.trim()) return segment;
-  }
-  return null;
 }
 
 function SpeakerTurnLines({ turns, className }: { turns: TranscriptTurn[]; className?: string }) {
@@ -173,7 +167,8 @@ function SpeakerTurnLines({ turns, className }: { turns: TranscriptTurn[]; class
 }
 
 function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptConfigured, cutoffSeconds }: TranscriptPanelProps) {
-  const [expanded, setExpanded] = useState(false);
+  const logRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
   const allSegments = transcript?.segments ?? [];
   // Only surface segments whose playback window has already been reached, so
   // scrubbing the shared clock backward hides transcripts that belong to a
@@ -183,79 +178,47 @@ function TranscriptPanel({ recordingId, recordingLabel, transcript, transcriptCo
   const completed = segments.filter((segment) => segment.status === 'completed');
   const failed = segments.filter((segment) => segment.status === 'failed');
   const empty = segments.filter((segment) => segment.status === 'empty').length;
-  const liveSegment = latestCompletedSegment(segments);
-  const liveTurns = liveSegment?.turns ?? [];
-  const hasLog = segments.some((segment) =>
-    segment.status === 'completed' || segment.status === 'failed' || segment.status === 'empty' ||
-    segment.status === 'queued' || segment.status === 'processing',
-  );
+  const latest = segments.at(-1);
+  const latestKey = `${segments.length}:${latest?.id ?? ''}:${latest?.status ?? ''}:${latest?.text ?? ''}`;
+
+  useEffect(() => {
+    const log = logRef.current;
+    if (!log || !followLatest.current) return;
+    log.scrollTop = log.scrollHeight;
+  }, [latestKey]);
+
+  const placeholder = segments.length === 0
+    ? (!transcriptConfigured
+      ? 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'
+      : inFlight > 0
+        ? 'Transcribing the latest released speech…'
+        : 'Speech will appear here as the shared clock releases each segment.')
+    : null;
 
   return (
-    <section className={`feed-transcript${expanded ? ' expanded' : ''}`} aria-label={`Live transcript for ${recordingLabel}`}>
+    <section className="feed-transcript" aria-label={`Live transcript for ${recordingLabel}`}>
       <header className="transcript-heading">
         <span>Live transcript</span>
         <div className="transcript-heading-actions">
           <TranscriptStatusBadge inFlight={inFlight} completedCount={completed.length} emptyCount={empty} failedCount={failed.length} configured={transcriptConfigured} />
-          {hasLog && (
-            <button
-              type="button"
-              className="transcript-expand"
-              aria-expanded={expanded}
-              aria-controls={`transcript-log-${recordingId}`}
-              aria-label={expanded ? `Collapse transcript log for ${recordingLabel}` : `Expand transcript log for ${recordingLabel}`}
-              onClick={() => setExpanded((value) => !value)}
-            >
-              <ExpandIcon expanded={expanded} />
-            </button>
-          )}
         </div>
       </header>
-
-      {!expanded && (
-        <div className="transcript-live" data-testid={`feed-transcript-${recordingId}`}>
-          {liveSegment && liveTurns.length > 0 ? (
-            <SpeakerTurnLines turns={liveTurns} className="speaker-turns transcript-live-turns" />
-          ) : liveSegment?.text ? (
-            <p className="transcript-plain transcript-live-text">{liveSegment.text}</p>
-          ) : (
-            <p className="transcript-placeholder">
-              {!transcriptConfigured
-                ? 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'
-                : inFlight > 0
-                  ? 'Transcribing the latest released speech…'
-                  : 'Speech will appear here as the shared clock releases each segment.'}
-            </p>
-          )}
-        </div>
-      )}
-
-      {expanded && (
-        <div id={`transcript-log-${recordingId}`} className="transcript-log" data-testid={`feed-transcript-log-${recordingId}`}>
-          {segments.length === 0 && (
-            <p className="transcript-placeholder">
-              {transcriptConfigured
-                ? 'No transcript segments yet.'
-                : 'Set XAI_API_KEY on the API to enable live Grok transcription for this feed.'}
-            </p>
-          )}
-          <ol className="transcript-log-list">
-            {segments.map((segment) => <TranscriptLogEntry key={segment.id} segment={segment} />)}
-          </ol>
-        </div>
-      )}
+      <div
+        ref={logRef}
+        id={`transcript-log-${recordingId}`}
+        className="transcript-log"
+        data-testid={`feed-transcript-${recordingId}`}
+        onScroll={(event) => {
+          const log = event.currentTarget;
+          followLatest.current = log.scrollHeight - log.scrollTop - log.clientHeight < 64;
+        }}
+      >
+        {placeholder && <p className="transcript-placeholder">{placeholder}</p>}
+        <ol className="transcript-log-list" data-testid={`feed-transcript-log-${recordingId}`}>
+          {segments.map((segment) => <TranscriptLogEntry key={segment.id} segment={segment} />)}
+        </ol>
+      </div>
     </section>
-  );
-}
-
-function ExpandIcon({ expanded }: { expanded: boolean }) {
-  return (
-    <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true" focusable="false">
-      {expanded ? (
-        <path d="M3.5 8.5 7 5l3.5 3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      ) : (
-        <path d="M3.5 5.5 7 9l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      )}
-    </svg>
   );
 }
 
