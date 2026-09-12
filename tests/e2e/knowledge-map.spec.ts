@@ -1,5 +1,31 @@
 import { test, expect } from '@playwright/test';
 
+test('automatic build shows real progress and becomes playable without a build click', async ({ page }) => {
+  let ready = false;
+  let builds = 0;
+  const playback = { run_id: 'progress-run', state: 'ended', position_seconds: 20, duration_seconds: 20,
+    revision: 0, server_time: new Date().toISOString() };
+  const incident = { id: 'progress-incident', title: 'Automatic board', recordings: [], playback };
+  await page.route('**/api/**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/knowledge') && route.request().method() === 'POST') builds++;
+    await route.fulfill({ json: path.endsWith('/knowledge') ? {
+      run_id: playback.run_id, ready: true, state: ready ? 'completed' : 'processing',
+      completed: 2, expected: 2, failed: 0, reason: '', stale: false,
+      version_id: ready ? 'saved-version' : null, nodes: [], edges: [],
+      progress: { stage: ready ? 'ready' : 'analyzing', completed_batches: 1, total_batches: 2 },
+    } : path.endsWith('/playback') ? playback : incident });
+  });
+  await page.goto('/?incident=progress-incident&view=mindmap');
+  await expect(page.getByText('1 of 2 source batches complete')).toBeVisible();
+  await expect(page.locator('.board-build-track')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Build mind map' })).toHaveCount(0);
+  ready = true;
+  await expect(page.getByText('Ready to replay', { exact: true })).toBeVisible();
+  await expect(page.locator('.board-build-track')).toHaveCount(0);
+  expect(builds).toBe(0);
+});
+
 test('knowledge map shows people and connections, filters future statements and seeks the shared incident', async ({ page }) => {
   let commands = 0;
   const playback = { run_id: 'knowledge-run', state: 'paused', position_seconds: 12, duration_seconds: 30,
@@ -42,13 +68,21 @@ test('knowledge map shows people and connections, filters future statements and 
   await expect(mapWindow).toHaveURL(/view=mindmap/);
   await expect(mapWindow.getByText('Independent map window')).toBeVisible();
   await expect(mapWindow.getByRole('region', { name: 'Incident map', exact: true })).toHaveCount(0);
-  await expect(map.locator('.graph-legend').getByText('Responders', { exact: true })).toBeVisible();
+  await expect(map.getByRole('button', { name: 'Play reconstruction', exact: true })).toBeVisible();
+  await expect(map.locator('.graph-node')).toHaveCount(0);
+  await map.getByRole('button', { name: 'Play reconstruction', exact: true }).click();
+  await expect.poll(() => map.locator('.graph-node').count()).toBeGreaterThan(0);
+  expect(commands).toBe(0);
+  await map.getByRole('button', { name: 'Pause reconstruction', exact: true }).click();
+  await expect(map.locator('.knowledge-contradicted')).toHaveCount(0);
+  await map.getByRole('button', { name: 'Final board', exact: true }).click();
   await expect(map.locator('.knowledge-contradicted')).toHaveCount(1);
   await map.getByRole('checkbox', { name: 'Follow timeline' }).check();
   await expect(map.getByText('Correction: phone', { exact: true })).toHaveCount(0);
   await expect(map.locator('.knowledge-contradicted')).toHaveCount(0);
   await map.getByRole('checkbox', { name: 'Follow timeline' }).uncheck();
-  await map.getByRole('button', { name: 'Connection: Witness speaks with responding officer' }).click();
+  await map.getByRole('button', { name: 'Connection: Witness speaks with responding officer' }).focus();
+  await mapWindow.keyboard.press('Enter');
   const inspector = map.getByRole('complementary', { name: 'Map details' });
   await expect(inspector.getByRole('heading', { name: 'Witness speaks with responding officer' })).toBeVisible();
   await inspector.getByRole('button', { name: /Jump to incident at/ }).click();
@@ -77,6 +111,7 @@ test('knowledge map shows people and connections, filters future statements and 
   await mapWindow.mouse.move(dot.x + 70, dot.y + 50, { steps: 8 });
   await mapWindow.mouse.up();
   await expect(witness).not.toHaveAttribute('transform', before!);
+  expect(await mapWindow.evaluate(() => Object.keys(JSON.parse(localStorage.getItem('bop:board-layout:knowledge-ui:version') || '{}')))).toContain('person');
   await map.getByRole('button', { name: 'Reset view' }).click();
   await witness.focus();
   await mapWindow.keyboard.press('Enter');

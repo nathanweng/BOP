@@ -5,11 +5,12 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import subprocess
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, Query
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from sqlalchemy import select, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -18,9 +19,10 @@ from starlette.formparsers import MultiPartException
 from .config import Settings
 from .database import make_database
 from .media import media_path, stage_upload
-from .models import Incident, PlaybackRun, Recording
+from .models import Incident, PlaybackRun, Recording, KnowledgeVersion, TranscriptSegment
 from .event_service import EventService
 from .knowledge import KnowledgeService
+from .situation import SituationService
 from .playback import playback_view, utc
 from .schemas import (
     IncidentCreate,
@@ -150,6 +152,7 @@ def create_app(
     )
     events_service = EventService(settings, sessions, lambda: utc(resolved_clock()))
     knowledge_service = KnowledgeService(settings, sessions, lambda: utc(resolved_clock()))
+    situation_service = SituationService(settings, sessions, lambda: utc(resolved_clock()))
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -157,12 +160,14 @@ def create_app(
         transcription.start()
         events_service.start()
         knowledge_service.start()
+        situation_service.start()
         try:
             yield
         finally:
             transcription.stop()
             events_service.stop()
             knowledge_service.stop()
+            situation_service.stop()
             engine.dispose()
 
     app = FastAPI(title="Bodycam incident foundation", version="0.1.0", lifespan=lifespan)
@@ -174,6 +179,7 @@ def create_app(
     app.state.transcription = transcription
     app.state.events = events_service
     app.state.knowledge = knowledge_service
+    app.state.situation = situation_service
 
     def now():
         return utc(app.state.clock())
@@ -513,6 +519,43 @@ def create_app(
     def build_knowledge(incident_id: str, session: Session = Depends(session_dependency)):
         incident = incident_row(session, incident_id, lock=True)
         return knowledge_service.enqueue(session, incident, current_run(session, incident))
+
+    @app.get("/api/incidents/{incident_id}/knowledge/{version_id}/sources/{segment_id}/thumbnail")
+    def board_thumbnail(incident_id: str, version_id: str, segment_id: str, session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id)
+        version = session.get(KnowledgeVersion, version_id)
+        segment = session.get(TranscriptSegment, segment_id)
+        if (not version or version.status != 'completed' or version.run_id != incident.active_run_id
+                or not segment or segment.run_id != version.run_id or segment.status != 'completed'):
+            raise HTTPException(404, 'Source frame unavailable')
+        recording = session.get(Recording, segment.recording_id)
+        if not recording or recording.incident_id != incident_id:
+            raise HTTPException(404, 'Source frame unavailable')
+        path = media_path(settings, recording.storage_key)
+        # Representative frame from this exact source window; never generated imagery.
+        timestamp = (segment.local_start_seconds + segment.local_end_seconds) / 2
+        session.rollback()
+        try:
+            output = subprocess.run([settings.ffmpeg_binary, '-v', 'error', '-nostdin', '-protocol_whitelist', 'file,pipe',
+                '-ss', str(timestamp), '-i', str(path), '-frames:v', '1', '-vf', 'scale=240:-2',
+                '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], capture_output=True, timeout=15)
+        except (OSError, subprocess.TimeoutExpired):
+            raise HTTPException(503, 'Source frame unavailable') from None
+        if output.returncode or not output.stdout:
+            raise HTTPException(404, 'Source frame unavailable')
+        return Response(output.stdout, media_type='image/jpeg', headers={'Cache-Control': 'private, max-age=86400'})
+
+    @app.get("/api/incidents/{incident_id}/situation-report")
+    def get_situation_report(incident_id: str, session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id)
+        return situation_service.view(session, incident, current_run(session, incident))
+
+    @app.post("/api/incidents/{incident_id}/situation-report", status_code=202)
+    def retry_situation_report(incident_id: str, session: Session = Depends(session_dependency)):
+        incident = incident_row(session, incident_id)
+        run = current_run(session, incident)
+        situation_service.retry(session, run)
+        return situation_service.view(session, incident, run)
 
     return app
 

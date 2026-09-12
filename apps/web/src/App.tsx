@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, messageFor } from './api';
 import { CameraFeed } from './CameraFeed';
 import { EventHistory } from './EventHistory';
+import { BoardStatus } from './BoardStatus';
 import { formatTime } from './clock';
 import { useSelection } from './selection';
 import { processedThrough } from './timeline';
@@ -245,6 +246,7 @@ function Workspace({ incident }: { incident: Incident }) {
     />}
 
     <section className={`panel main-stage${hasCameras ? ' has-cameras' : ''}${stageExpanded ? ' stage-expanded' : ''}`} aria-labelledby="stage-heading">
+      <BoardStatus incidentId={incident.id} runId={replay.playback.run_id} />
       <div className="section-heading"><h2 id="stage-heading"><span className="section-number">01</span> Camera views</h2>
         <a href={`?incident=${encodeURIComponent(incident.id)}&view=mindmap`} target={`mindmap-${incident.id}`}
           onClick={(event) => {

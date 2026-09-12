@@ -120,6 +120,11 @@ class KnowledgeVersion(Base):
     lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     error: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    stage: Mapped[str] = mapped_column(String(32), default="queued", server_default="queued")
+    completed_batches: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    total_batches: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    replay_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    sources_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class KnowledgeObservation(Base):
@@ -149,3 +154,20 @@ class KnowledgeSupport(Base):
     __tablename__ = "knowledge_supports"
     item_id: Mapped[str] = mapped_column(ForeignKey("knowledge_items.id"), primary_key=True)
     observation_id: Mapped[str] = mapped_column(ForeignKey("knowledge_observations.id"), primary_key=True)
+
+
+class SituationReportVersion(Base):
+    __tablename__ = "situation_report_versions"
+    __table_args__ = (UniqueConstraint("run_id", "input_hash", name="uq_situation_report_input"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    run_id: Mapped[str] = mapped_column(ForeignKey("playback_runs.id"), index=True)
+    input_hash: Mapped[str] = mapped_column(String(64))
+    known_through: Mapped[float] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(String(16), default="queued")
+    payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    retry_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    lease_token: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(String(500), nullable=True)
